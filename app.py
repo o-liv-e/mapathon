@@ -116,7 +116,7 @@ def fingerprint(row):
 def display_results(gdf, area_km2, n_tiles, year):
     informal = float(gdf.loc[gdf.predicted_class.isin(["informal", "informal_morphology_candidate"]), "cell_area_m2"].sum() / 1e6)
     built = float(gdf.loc[gdf.built_gate, "cell_area_m2"].sum() / 1e6)
-    high_imi = int((gdf["imi"] >= 0.62).sum())
+    high_imi = int((gdf["imi"] >= 0.45).sum())
     classes = gdf["predicted_class"].value_counts()
 
     c1, c2, c3, c4, c5 = st.columns(5)

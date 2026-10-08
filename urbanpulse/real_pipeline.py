@@ -179,7 +179,7 @@ def run_real_inference(aoi_ll, year=2025, include_osm=True, progress=None):
     # This is a transparent morphology baseline, not a trained probability of
     # informal housing. The thresholds are review-stage starting points.
     feats["predicted_class"] = np.select(
-        [water, vegetation, ~feats["built_gate"], feats["imi"] >= 0.58, feats["imi"] >= 0.40],
+        [water, vegetation, ~feats["built_gate"], feats["imi"] >= 0.45, feats["imi"] >= 0.30],
         ["water", "open_vegetated", "sparse_low_development", "informal_morphology_candidate", "built_mixed"],
         default="built_planned_like",
     )

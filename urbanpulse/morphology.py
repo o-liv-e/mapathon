@@ -12,19 +12,27 @@ def _minmax(s):
 
 def add_normalized_morphology_features(df):
     out = df.copy()
-    # Building heterogeneity is a useful observable morphology signal.
-    out["building_irregularity"] = out.get("footprint_cv", 0.0)
-    out["road_irregularity"] = 1.0 / (1.0 + out.get("road_segments", 0.0))
-    # High road density alone is not a reliable informal signal, so combine it with
-    # distance from major roads and neighbourhood context later.
+    # Observable built-form signals. These are morphology indicators, not
+    # socioeconomic or legal-status labels.
+    out["building_irregularity"] = out.get("footprint_cv", 0.0).fillna(0)
+    out["small_building_fraction"] = out.get("small_bldg_frac", 0.0).fillna(0)
+    # Closely spaced small footprints are a useful density/texture signal.
+    nn = out.get("mean_nn_dist", pd.Series(100.0, index=out.index)).fillna(100.0)
+    out["building_spacing_score"] = 1.0 - _minmax(nn)
+    # Lower compactness is treated as more irregular footprint geometry.
+    compact = out.get("compactness", pd.Series(0.5, index=out.index)).fillna(0.5)
+    out["footprint_irregularity"] = 1.0 - compact.clip(0, 1)
+
     for src, dst in [
         ("building_density", "building_density_norm"),
         ("building_irregularity", "building_irregularity_norm"),
+        ("small_building_fraction", "small_building_fraction_norm"),
+        ("building_spacing_score", "building_spacing_norm"),
+        ("footprint_irregularity", "footprint_irregularity_norm"),
         ("impervious_fraction", "impervious_fraction_norm"),
         ("ndbi", "ndbi_norm"),
     ]:
         out[dst] = _minmax(out[src].fillna(0))
-    out["road_irregularity_norm"] = _minmax(out["road_irregularity"].fillna(0))
     return out
 
 
@@ -55,28 +63,28 @@ def add_spatial_context(df, radius_cells=1):
 
 
 def compute_imi(df):
-    """Continuous 0-1 informal morphology score using observable features."""
+    """Continuous 0-1 informal-morphology score using observable features.
+
+    This is intentionally a transparent screening score. It is NOT a validated
+    probability of informal housing and must be calibrated against labelled local
+    examples before production use.
+    """
     out = add_normalized_morphology_features(df)
-    # The weights are deliberately transparent and can later be calibrated on labels.
     components = {
-        "building_density_norm": 0.22,
-        "building_irregularity_norm": 0.18,
-        "road_irregularity_norm": 0.12,
-        "impervious_fraction_norm": 0.13,
-        "ndbi_norm": 0.12,
-        "local_building_density": 0.08,
-        "local_ndbi": 0.08,
-        "local_impervious_fraction": 0.07,
+        "building_density_norm": 0.18,
+        "small_building_fraction_norm": 0.16,
+        "building_irregularity_norm": 0.14,
+        "building_spacing_norm": 0.10,
+        "footprint_irregularity_norm": 0.10,
+        "impervious_fraction_norm": 0.12,
+        "ndbi_norm": 0.08,
+        "local_building_density_norm": 0.07,
+        "local_impervious_fraction_norm": 0.05,
     }
-    # Local variables are normalized before use.
-    for c in ["local_building_density", "local_ndbi", "local_impervious_fraction"]:
+    for c in ["local_building_density", "local_impervious_fraction"]:
         if c in out:
             out[c + "_norm"] = _minmax(out[c].fillna(0))
-    terms = []
-    for c, w in components.items():
-        cc = c if c in out.columns else c + "_norm"
-        if cc in out.columns:
-            terms.append(w * out[cc].fillna(0))
+    terms = [w * out[c].fillna(0) for c, w in components.items() if c in out.columns]
     out["imi"] = np.clip(sum(terms), 0, 1)
     return out
 
