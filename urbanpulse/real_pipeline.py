@@ -53,22 +53,43 @@ def sentinel_composite(region, year):
     return col.select(BANDS_IN, BANDS_OUT).median().divide(10000)
 
 
-def download_tile(image, tile_geom, crs, scale=10):
-    """Download one small GeoTIFF from Earth Engine."""
-    region = ee.Geometry(tile_geom.__geo_interface__)
-    url = image.getDownloadURL({
-        "name": "urbanpulse_s2",
-        "bands": BANDS_OUT,
-        "region": region,
-        "scale": scale,
-        "crs": crs.to_string() if hasattr(crs, "to_string") else str(crs),
-        "format": "GEO_TIFF",
-        "filePerBand": False,
-    })
-    r = requests.get(url, timeout=180)
-    r.raise_for_status()
-    return r.content
+def download_tile(image, geometry, crs):
+    """Download a bounded Sentinel-2 tile.
 
+    Earth Engine requires an explicit region for getDownloadURL().
+    We clip to the requested tile/AOI and provide both region and scale
+    so the request is bounded and reproducible.
+    """
+    import ee
+    import requests
+
+    # Convert the GeoPandas/Shapely geometry to WGS84 GeoJSON coordinates.
+    if hasattr(geometry, "to_crs"):
+        geom_wgs84 = geometry.to_crs("EPSG:4326")
+        region = geom_wgs84.__geo_interface__
+    else:
+        region = geometry.__geo_interface__
+
+    # Explicitly clip the image before requesting a download.
+    bounded = image.clip(ee.Geometry(region))
+
+    bands = [
+        "B2", "B3", "B4", "B8", "B11", "B12",
+    ]
+
+    url = bounded.getDownloadURL({
+        "name": "urbanpulse_s2",
+        "bands": bands,
+        "region": region,
+        "scale": 10,
+        "crs": "EPSG:4326",
+        "filePerBand": False,
+        "format": "GEO_TIFF",
+    })
+
+    response = requests.get(url, timeout=180)
+    response.raise_for_status()
+    return response.content
 
 def fetch_osm(aoi_ll, crs, include_buildings=True, include_roads=True):
     """Optional OSM structural context. Returns building/road GeoDataFrames."""

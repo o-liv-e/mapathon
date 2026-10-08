@@ -38,3 +38,10 @@ The real-data mode currently uses a transparent morphology baseline so the app c
 5. save the trained model and run inference on arbitrary AOIs.
 
 Synthetic demo accuracy must not be presented as Chennai accuracy.
+
+### v3.1 Sentinel-2 download fix
+
+The real-data pipeline now explicitly bounds every Earth Engine tile download
+with the tile geometry and a 10 m scale. This fixes Earth Engine's
+`Image is unbounded` thumbnail/download error and keeps the tile-based
+processing architecture intact.
