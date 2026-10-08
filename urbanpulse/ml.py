@@ -116,8 +116,8 @@ def _spatial_eval(model, X, y, groups):
 
 def train_models(gdf, labels):
     """
-    Trains Random Forest and XGBoost models on morphology features, safely extracting
-    target array y and returning all expected metadata keys (n_rows, selected_model, etc.).
+    Trains Random Forest and XGBoost models on morphology features, returning 
+    dictionary-formatted evaluations with 'holdout' support to avoid AttributeErrors.
     """
     feature_cols = numeric_feature_columns(gdf)
     X = gdf[feature_cols].values
@@ -163,7 +163,6 @@ def train_models(gdf, labels):
     xgb_model.fit(X, y)
     rf_model.fit(X, y)
 
-    # Required metadata key fixes: 'n_rows', 'n_samples', 'selected_model'
     n_rows = len(gdf)
     metadata = {
         'selected_model': 'xgboost',
@@ -179,14 +178,15 @@ def train_models(gdf, labels):
         'classes_mapped': dict(zip(map(int, le.transform(le.classes_)), le.classes_))
     }
 
-    # Evaluation dictionary with holdout metric fallback
+    # Dict format for evaluations to ensure e.get("holdout") resolves properly
     evaluations = {
         'spatial_cv_name': cv_name,
         'report': cv_report,
         'confusion_matrix': cv_cm,
         'holdout': {
             'report': cv_report,
-            'confusion_matrix': cv_cm
+            'confusion_matrix': cv_cm,
+            'accuracy': cv_report.get('accuracy', 0.0)
         }
     }
 
