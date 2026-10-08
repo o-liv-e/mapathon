@@ -1,551 +1,137 @@
-"""UrbanPulse hackathon dashboard.
-
-Run:
-    streamlit run app.py
+"""UrbanPulse v3 — demo dashboard + real AOI inference.
+Run: streamlit run app.py
 """
-
 import json
 from pathlib import Path
-
 import pandas as pd
 import streamlit as st
 
-
-# ============================================================
-# PAGE CONFIG
-# ============================================================
-
-st.set_page_config(
-    page_title="UrbanPulse",
-    page_icon="🛰️",
-    layout="wide",
-)
-
+st.set_page_config(page_title="UrbanPulse", page_icon="🛰️", layout="wide")
 ROOT = Path(__file__).parent
 RESULTS = ROOT / "results"
 
-
-# ============================================================
-# HEADER
-# ============================================================
-
 st.title("🛰️ UrbanPulse")
-
-st.caption(
-    "Explainable urban morphology intelligence for "
-    "informal-neighbourhood mapping"
-)
+st.caption("Explainable urban morphology intelligence for informal-neighbourhood mapping")
 
 
-# ============================================================
-# LOAD RESULTS
-# ============================================================
-
-stats_path = RESULTS / "stats.json"
-
-if not stats_path.exists():
-    st.warning(
-        "No results found. Run "
-        "`python -m urbanpulse.run demo` first."
-    )
-    st.stop()
-
-try:
-    stats = json.loads(
-        stats_path.read_text(encoding="utf-8")
-    )
-except Exception as e:
-    st.error(f"Could not read stats.json: {e}")
-    st.stop()
-
-
-headline = stats.get("headline", {})
-
-
-# ============================================================
-# HEADLINE METRICS
-# ============================================================
-
-c1, c2, c3, c4, c5 = st.columns(5)
-
-c1.metric(
-    "Study area",
-    f"{headline.get('study_area_km2', 0):.2f} km²",
-)
-
-c2.metric(
-    "Informal morphology",
-    f"{headline.get('informal_area_km2', 0):.2f} km²",
-)
-
-c3.metric(
-    "Clusters",
-    headline.get("informal_clusters", 0),
-)
-
-c4.metric(
-    "Confidence",
-    f"{headline.get('high_confidence_share', 0) * 100:.1f}%",
-)
-
-c5.metric(
-    "Emerging cells",
-    headline.get("emerging_cells", 0),
-)
-
-
-# ============================================================
-# WHAT MAKES URBANPULSE DIFFERENT?
-# ============================================================
-
-st.subheader("What makes UrbanPulse different?")
-
-st.markdown(
-    """
-- **Satellite-first:** Sentinel-2 provides the primary observable evidence.
-- **Morphology-aware:** buildings, roads and neighbourhood context are fused with spectral features.
-- **Explainable:** every cell has a confidence score and an Informal Morphology Index (IMI).
-- **Temporal:** annual morphology change reveals stable, changing and emerging zones.
-- **Spatially validated:** model evaluation uses geographic blocks rather than random cell splits.
-"""
-)
-
-
-# ============================================================
-# MAP LAYER SELECTION
-# ============================================================
-
-st.subheader("UrbanPulse map")
-
-area_by_year = stats.get("area_by_year", {})
-
-if area_by_year:
-    try:
-        latest_year = max(
-            area_by_year.keys(),
-            key=lambda x: int(x)
-        )
-    except Exception:
-        latest_year = "2026"
-else:
-    latest_year = "2026"
-
-
-files = {
-    "Informal morphology":
-        RESULTS / "informal_morphology.geojson",
-
-    "Emerging zones":
-        RESULTS / "emerging_zones.geojson",
-
-    "Uncertain zones":
-        RESULTS / "uncertain_zones.geojson",
-
-    "All cells":
-        RESULTS / "cells.geojson",
-
-    "Clusters":
-        RESULTS / f"clusters_{latest_year}.geojson",
-}
-
-
-layer = st.selectbox(
-    "UrbanPulse analysis layer",
-    list(files.keys()),
-)
-
-
-# ============================================================
-# IMPORT MAP LIBRARIES
-# ============================================================
-
-try:
+def show_map(gdf, layer_name="UrbanPulse"):
     import folium
-    import geopandas as gpd
     from streamlit_folium import st_folium
+    gdf = gdf.to_crs(4326)
+    if gdf.empty:
+        st.info("No features to display.")
+        return
+    c = gdf.geometry.centroid
+    center = [c.y.mean(), c.x.mean()]
+    m = folium.Map(location=center, zoom_start=13, tiles=None)
+    folium.TileLayer("OpenStreetMap", name="Street map", control=True).add_to(m)
+    folium.TileLayer(
+        tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+        attr="Esri World Imagery", name="Satellite", overlay=False, control=True,
+    ).add_to(m)
+    folium.TileLayer("OpenTopoMap", name="Terrain", control=True).add_to(m)
+    fields = [c for c in ["predicted_class", "imi", "informal_probability", "confidence", "built_gate", "explanation"] if c in gdf.columns]
+    folium.GeoJson(gdf.to_json(), name=layer_name,
+                   tooltip=folium.GeoJsonTooltip(fields=fields, aliases=[x.replace("_", " ").title() for x in fields])).add_to(m)
+    folium.LayerControl().add_to(m)
+    st_folium(m, width=None, height=650)
 
-except ImportError:
-    st.error(
-        "Map dependencies are missing. Run:\n\n"
-        "`python -m pip install -r requirements.txt`"
-    )
-    st.stop()
+
+def display_results(gdf, area_km2, n_tiles, title="Real analysis"):
+    informal = float(gdf.loc[gdf.predicted_class == "informal", "cell_area_m2"].sum() / 1e6)
+    built = float(gdf.loc[gdf.built_gate, "cell_area_m2"].sum() / 1e6)
+    emerging = int((gdf.imi >= 0.62).sum())
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("AOI", f"{area_km2:.2f} km²")
+    c2.metric("Informal morphology", f"{informal:.2f} km²")
+    c3.metric("Built-up area", f"{built:.2f} km²")
+    c4.metric("Processing tiles", n_tiles)
+    st.caption("These are observable morphology outputs for the selected AOI/year — not socioeconomic estimates.")
+    show_map(gdf, title)
+    st.subheader("Morphology summary")
+    summary = gdf.groupby("predicted_class", dropna=False)["cell_area_m2"].sum().div(1e6).sort_values(ascending=False)
+    st.bar_chart(summary.rename("area_km2"))
+    st.subheader("Most informative cells")
+    cols = [c for c in ["cell_id", "predicted_class", "imi", "confidence", "building_count", "building_density", "impervious_fraction", "ndvi", "ndbi", "explanation"] if c in gdf.columns]
+    st.dataframe(gdf[cols].sort_values("imi", ascending=False).head(30), use_container_width=True)
+    st.download_button("Download GeoJSON", gdf.to_json(), file_name="urbanpulse_real.geojson", mime="application/geo+json")
 
 
-# ============================================================
-# LOAD SELECTED GEOJSON
-# ============================================================
+with st.sidebar:
+    st.header("Analysis")
+    mode = st.radio("Mode", ["Real AOI inference", "Demo results"], index=0)
 
-path = files[layer]
+if mode == "Real AOI inference":
+    st.subheader("Run UrbanPulse on a real AOI")
+    st.info("Upload a GeoJSON polygon of at least 10 km². The app downloads Sentinel-2 surface reflectance tile-by-tile and aggregates it to 100 m cells.")
+    upload = st.file_uploader("AOI GeoJSON", type=["geojson", "json"])
+    year = st.slider("Analysis year", min_value=2017, max_value=2026, value=2025)
+    use_osm = st.checkbox("Use OpenStreetMap buildings + roads", value=True, help="Adds structural morphology features. This can increase runtime for large AOIs.")
+    run = st.button("🚀 Run real analysis", type="primary", disabled=upload is None)
 
-if not path.exists():
+    with st.expander("Earth Engine setup"):
+        st.markdown("""
+        The deployed app expects these Streamlit secrets: `GEE_PROJECT_ID`, `GEE_SERVICE_ACCOUNT`, and `GEE_PRIVATE_KEY`.
+        Create them in the app's Streamlit Cloud **Settings → Secrets**; do not commit the private key to GitHub.
+        """)
+        st.code('GEE_PROJECT_ID = "your-google-cloud-project"\nGEE_SERVICE_ACCOUNT = "service-account@project.iam.gserviceaccount.com"\nGEE_PRIVATE_KEY = "-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----\\n"', language="toml")
 
-    st.info(
-        f"No data available for **{layer}**."
-    )
-
+    if run and upload is not None:
+        try:
+            from urbanpulse.aoi import read_aoi
+            from urbanpulse.real_pipeline import run_real_inference
+            aoi = read_aoi(upload)
+            status = st.status("Running UrbanPulse…", expanded=True)
+            bar = st.progress(0.0)
+            with status:
+                st.write("Validating AOI…")
+                st.write("Initializing Earth Engine…")
+                def progress(x):
+                    bar.progress(min(1.0, max(0.0, x)))
+                gdf, area, tiles = run_real_inference(aoi, year=year, include_osm=use_osm, progress=progress)
+                st.write(f"Processed {tiles} × 1 km tiles.")
+            status.update(label="Analysis complete", state="complete")
+            display_results(gdf, area, tiles, f"UrbanPulse {year}")
+        except Exception as e:
+            st.error(str(e))
+            st.exception(e)
 else:
-
-    try:
-
-        gdf = gpd.read_file(path)
-
-        if gdf.empty:
-
-            st.info(
-                f"The **{layer}** layer contains no features."
-            )
-
-        else:
-
-            # ----------------------------------------------------
-            # Coordinate system
-            # ----------------------------------------------------
-
-            if gdf.crs is None:
-                gdf = gdf.set_crs("EPSG:4326")
-
-            gdf = gdf.to_crs("EPSG:4326")
-
-            # ----------------------------------------------------
-            # Calculate map center
-            # ----------------------------------------------------
-
-            min_lon, min_lat, max_lon, max_lat = (
-                gdf.total_bounds
-            )
-
-            center_lat = (
-                min_lat + max_lat
-            ) / 2
-
-            center_lon = (
-                min_lon + max_lon
-            ) / 2
-
-            # ----------------------------------------------------
-            # CREATE MAP
-            # ----------------------------------------------------
-
-            m = folium.Map(
-                location=[
-                    center_lat,
-                    center_lon
-                ],
-                zoom_start=13,
-                control_scale=True,
-                tiles=None,
-            )
-
-            # ====================================================
-            # BASEMAP 1 — OPENSTREETMAP
-            # ====================================================
-
-            folium.TileLayer(
-                tiles="OpenStreetMap",
-                name="🗺️ Street Map",
-                overlay=False,
-                control=True,
-            ).add_to(m)
-
-            # ====================================================
-            # BASEMAP 2 — SATELLITE
-            # ====================================================
-
-            folium.TileLayer(
-                tiles=(
-                    "https://server.arcgisonline.com/"
-                    "ArcGIS/rest/services/World_Imagery/"
-                    "MapServer/tile/{z}/{y}/{x}"
-                ),
-                attr=(
-                    "Esri, Maxar, Earthstar Geographics, "
-                    "and the GIS User Community"
-                ),
-                name="🛰️ Satellite",
-                overlay=False,
-                control=True,
-            ).add_to(m)
-
-            # ====================================================
-            # BASEMAP 3 — TERRAIN
-            # ====================================================
-
-            folium.TileLayer(
-                tiles=(
-                    "https://{s}.tile.opentopomap.org/"
-                    "{z}/{x}/{y}.png"
-                ),
-                attr="OpenTopoMap",
-                name="⛰️ Terrain",
-                overlay=False,
-                control=True,
-            ).add_to(m)
-
-            # ====================================================
-            # TOOLTIP FIELDS
-            # ====================================================
-
-            preferred_fields = [
-                "imi",
-                "confidence",
-                "emerging_score",
-                "predicted_class",
-                "trajectory",
-                "area_km2",
-                "buildings",
-                "mean_confidence",
-                "first_detected",
-                "area_change_km2",
-            ]
-
-            tooltip_fields = [
-                field
-                for field in preferred_fields
-                if field in gdf.columns
-            ]
-
-            if tooltip_fields:
-
-                tooltip = folium.GeoJsonTooltip(
-                    fields=tooltip_fields,
-                    aliases=[
-                        field.replace(
-                            "_", " "
-                        ).title()
-                        for field in tooltip_fields
-                    ],
-                    localize=True,
-                    sticky=False,
-                    labels=True,
-                    style="""
-                        background-color: white;
-                        color: black;
-                        font-family: Arial;
-                        font-size: 12px;
-                        padding: 8px;
-                    """,
-                )
-
-            else:
-                tooltip = None
-
-            # ====================================================
-            # URBANPULSE GEOJSON
-            # ====================================================
-
-            geojson_args = {
-                "data": gdf.to_json(),
-                "name": layer,
-                "show": True,
-            }
-
-            if tooltip is not None:
-                geojson_args["tooltip"] = tooltip
-
-            folium.GeoJson(
-                **geojson_args
-            ).add_to(m)
-
-            # ====================================================
-            # LAYER CONTROL
-            # ====================================================
-
-            folium.LayerControl(
-                position="topright",
-                collapsed=False,
-            ).add_to(m)
-
-            # ====================================================
-            # DISPLAY MAP
-            # ====================================================
-
-            st_folium(
-                m,
-                width=None,
-                height=650,
-                returned_objects=[],
-            )
-
-    except Exception as e:
-
-        st.error(
-            f"Could not display the map: {e}"
-        )
-
-
-# ============================================================
-# TEMPORAL CHANGE
-# ============================================================
-
-st.subheader("Temporal change")
-
-if area_by_year:
-
-    area = pd.DataFrame(
-        area_by_year
-    ).T
-
-    try:
-        area.index = area.index.astype(int)
-        area = area.sort_index()
-    except Exception:
-        pass
-
-    if "informal" in area.columns:
-
-        informal_series = area[
-            ["informal"]
-        ].rename(
-            columns={
-                "informal":
-                "Informal morphology (km²)"
-            }
-        )
-
-        st.line_chart(
-            informal_series
-        )
-
-    else:
-
-        st.info(
-            "Informal morphology time-series data "
-            "is not available."
-        )
-
-else:
-
-    st.info(
-        "No temporal data is available."
-    )
-
-
-# ============================================================
-# MODEL EVIDENCE
-# ============================================================
-
-st.subheader("Model evidence")
-
-top_features = stats.get(
-    "top_features",
-    {}
-)
-
-if top_features:
-
-    features = (
-        pd.Series(
-            top_features,
-            name="importance",
-        )
-        .sort_values(
-            ascending=False
-        )
-        .head(10)
-    )
-
-    st.bar_chart(
-        features
-    )
-
-else:
-
-    st.info(
-        "Feature importance information "
-        "is not available."
-    )
-
-
-# ============================================================
-# CHANGE STATISTICS
-# ============================================================
-
-if "change" in stats:
-
-    with st.expander(
-        "Change statistics"
-    ):
-
-        change_df = pd.DataFrame(
-            stats["change"]
-        ).T
-
-        st.dataframe(
-            change_df,
-            use_container_width=True,
-        )
-
-
-# ============================================================
-# METHODOLOGY
-# ============================================================
-
-with st.expander(
-    "Methodology"
-):
-
-    methodology = stats.get(
-        "methodology",
-        {},
-    )
-
-    if methodology:
-
-        st.json(
-            methodology
-        )
-
-    else:
-
-        st.write(
-            "UrbanPulse combines Sentinel-2 satellite "
-            "features with building, road and spatial "
-            "morphology features. A machine-learning model "
-            "predicts observable urban morphology classes "
-            "using spatially separated validation."
-        )
-
-
-# ============================================================
-# INTERPRETATION
-# ============================================================
-
-with st.expander(
-    "Important interpretation note"
-):
-
-    st.write(
-        "UrbanPulse maps observable informal-type urban "
-        "morphology. It does not infer residents' income, "
-        "identity, ethnicity, or socioeconomic status from "
-        "imagery."
-    )
-
-
-# ============================================================
-# DEMO NOTE
-# ============================================================
-
-with st.expander(
-    "Demo data note"
-):
-
-    st.write(
-        "If this dashboard is running in demo mode, the "
-        "displayed results are generated from synthetic "
-        "data for testing the complete UrbanPulse pipeline. "
-        "They should not be presented as measured findings "
-        "about Chennai."
-    )
-
-
-# ============================================================
-# FOOTER
-# ============================================================
-
-st.markdown("---")
-
-st.caption(
-    "UrbanPulse — Explainable, scalable urban morphology intelligence"
-)
+    stats_path = RESULTS / "stats.json"
+    if not stats_path.exists():
+        st.warning("No demo results found. Run `python -m urbanpulse.run demo` first.")
+        st.stop()
+    stats = json.loads(stats_path.read_text())
+    h = stats["headline"]
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("Study area", f"{h['study_area_km2']:.2f} km²")
+    c2.metric("Informal morphology", f"{h['informal_area_km2']:.2f} km²")
+    c3.metric("Clusters", h["informal_clusters"])
+    c4.metric("Confidence", f"{h['high_confidence_share']*100:.1f}%")
+    c5.metric("Emerging cells", h.get("emerging_cells", 0))
+    st.warning("Demo mode uses bundled synthetic results. Do not present these numbers as real Chennai findings.")
+    files = {
+        "Informal morphology": RESULTS / "informal_morphology.geojson",
+        "Emerging zones": RESULTS / "emerging_zones.geojson",
+        "Uncertain zones": RESULTS / "uncertain_zones.geojson",
+        "All cells": RESULTS / "cells.geojson",
+        "Clusters": RESULTS / f"clusters_{max(stats['area_by_year'].keys())}.geojson",
+    }
+    import geopandas as gpd
+    layer = st.selectbox("Map layer", list(files.keys()))
+    if files[layer].exists():
+        show_map(gpd.read_file(files[layer]), layer)
+    area = pd.DataFrame(stats["area_by_year"]).T
+    if "informal" in area:
+        st.subheader("Temporal change")
+        st.line_chart(area[["informal"]].rename(columns={"informal": "Informal morphology (km²)"}))
+
+with st.expander("Methodology and interpretation"):
+    st.markdown("""
+    **UrbanPulse does not identify people, income or legal status.** It maps observable urban morphology.
+
+    **Real-data pipeline:** AOI validation → 1 km processing tiles → Sentinel-2 L2A surface reflectance → spectral indices → optional OSM building/road morphology → 100 m spatial context → built-up gate → morphology classification → IMI and confidence.
+
+    **Sparse-area safeguard:** cells with insufficient building density, building count, impervious surface and neighbourhood built context are assigned `sparse_low_development`; their IMI is forced to zero. Thresholds are starting values and should be calibrated with real Chennai labels before claiming production accuracy.
+
+    **Important ML note:** the current real-data mode is a transparent morphology inference baseline. For the final hackathon model, collect labelled Chennai cells and train the Random Forest with spatial-block validation; do not treat synthetic training accuracy as real-world accuracy.
+    """)

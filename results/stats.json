@@ -7,14 +7,14 @@
     "total_buildings": 21804,
     "buildings_per_km2": 2129.296875,
     "informal_annual_growth_pct": 2.48088018014494,
-    "changed_class_area_km2": 0.86,
+    "changed_class_area_km2": 0.88,
     "largest_expansion_zone": {
       "area_km2": 0.33,
       "centroid_lon": 80.26926333762714,
-      "centroid_lat": 13.07224284007593
+      "centroid_lat": 13.072242840075923
     },
-    "mean_confidence": 0.940719590912795,
-    "high_confidence_share": 0.90234375,
+    "mean_confidence": 0.9407196772159132,
+    "high_confidence_share": 0.9033203125,
     "mean_imi": 0.34454093841047195,
     "emerging_cells": 36
   },
@@ -22,8 +22,8 @@
     "2019": {
       "informal": 1.71,
       "planned_residential": 3.36,
-      "high_rise": 0.88,
-      "commercial": 0.93,
+      "high_rise": 0.87,
+      "commercial": 0.94,
       "industrial": 1.7,
       "open_vegetated": 0.87,
       "water": 0.79
@@ -32,17 +32,17 @@
       "informal": 1.75,
       "planned_residential": 3.36,
       "high_rise": 0.9,
-      "commercial": 0.92,
-      "industrial": 1.71,
+      "commercial": 0.91,
+      "industrial": 1.72,
       "open_vegetated": 0.81,
       "water": 0.79
     },
     "2021": {
       "informal": 1.77,
       "planned_residential": 3.36,
-      "high_rise": 0.89,
-      "commercial": 0.96,
-      "industrial": 1.71,
+      "high_rise": 0.9,
+      "commercial": 0.94,
+      "industrial": 1.72,
       "open_vegetated": 0.76,
       "water": 0.79
     },
@@ -50,16 +50,16 @@
       "informal": 1.83,
       "planned_residential": 3.35,
       "high_rise": 0.91,
-      "commercial": 0.99,
-      "industrial": 1.71,
+      "commercial": 0.98,
+      "industrial": 1.72,
       "open_vegetated": 0.66,
       "water": 0.79
     },
     "2023": {
       "informal": 1.84,
       "planned_residential": 3.34,
-      "high_rise": 0.92,
-      "commercial": 1.01,
+      "high_rise": 0.95,
+      "commercial": 0.98,
       "industrial": 1.71,
       "open_vegetated": 0.63,
       "water": 0.79
@@ -67,8 +67,8 @@
     "2024": {
       "informal": 1.93,
       "planned_residential": 3.33,
-      "high_rise": 0.93,
-      "commercial": 1.01,
+      "high_rise": 0.94,
+      "commercial": 1.0,
       "industrial": 1.72,
       "open_vegetated": 0.53,
       "water": 0.79
@@ -76,8 +76,8 @@
     "2025": {
       "informal": 1.98,
       "planned_residential": 3.33,
-      "high_rise": 0.91,
-      "commercial": 1.05,
+      "high_rise": 0.93,
+      "commercial": 1.03,
       "industrial": 1.73,
       "open_vegetated": 0.45,
       "water": 0.79
@@ -85,8 +85,8 @@
     "2026": {
       "informal": 2.03,
       "planned_residential": 3.33,
-      "high_rise": 0.94,
-      "commercial": 1.05,
+      "high_rise": 0.95,
+      "commercial": 1.04,
       "industrial": 1.73,
       "open_vegetated": 0.37,
       "water": 0.79
@@ -108,18 +108,18 @@
       "annual_growth_pct": -0.128
     },
     "high_rise": {
-      "area_first_km2": 0.88,
-      "area_last_km2": 0.94,
-      "abs_change_km2": 0.06,
-      "pct_change": 6.8182,
-      "annual_growth_pct": 0.9467
+      "area_first_km2": 0.87,
+      "area_last_km2": 0.95,
+      "abs_change_km2": 0.08,
+      "pct_change": 9.1954,
+      "annual_growth_pct": 1.2646
     },
     "commercial": {
-      "area_first_km2": 0.93,
-      "area_last_km2": 1.05,
-      "abs_change_km2": 0.12,
-      "pct_change": 12.9032,
-      "annual_growth_pct": 1.7488
+      "area_first_km2": 0.94,
+      "area_last_km2": 1.04,
+      "abs_change_km2": 0.1,
+      "pct_change": 10.6383,
+      "annual_growth_pct": 1.4547
     },
     "industrial": {
       "area_first_km2": 1.7,
@@ -157,21 +157,21 @@
       "support": 120.0
     },
     "high_rise": {
-      "precision": 0.8907563025210085,
-      "recall": 0.8833333333333333,
-      "f1-score": 0.8870292887029289,
+      "precision": 0.864,
+      "recall": 0.9,
+      "f1-score": 0.8816326530612245,
       "support": 120.0
     },
     "commercial": {
-      "precision": 0.8583333333333333,
-      "recall": 0.8583333333333333,
-      "f1-score": 0.8583333333333333,
+      "precision": 0.8706896551724138,
+      "recall": 0.8416666666666667,
+      "f1-score": 0.8559322033898306,
       "support": 120.0
     },
     "industrial": {
-      "precision": 0.9586776859504132,
+      "precision": 0.9747899159663865,
       "recall": 0.9666666666666667,
-      "f1-score": 0.9626556016597511,
+      "f1-score": 0.9707112970711297,
       "support": 120.0
     },
     "open_vegetated": {
@@ -188,34 +188,34 @@
     },
     "accuracy": 0.9583333333333334,
     "macro avg": {
-      "precision": 0.9582524745435365,
+      "precision": 0.9584970815912571,
       "recall": 0.9583333333333333,
-      "f1-score": 0.958288317670859,
+      "f1-score": 0.9583251647888835,
       "support": 840.0
     },
     "weighted avg": {
-      "precision": 0.9582524745435365,
+      "precision": 0.9584970815912571,
       "recall": 0.9583333333333334,
-      "f1-score": 0.9582883176708591,
+      "f1-score": 0.9583251647888835,
       "support": 840.0
     }
   },
   "top_features": {
-    "mean_building_area": 0.0718,
-    "ndvi": 0.0712,
-    "ndwi": 0.071,
+    "ndwi": 0.0723,
+    "mean_building_area": 0.0713,
+    "ndvi": 0.0689,
     "ndbi_norm": 0.0649,
-    "impervious_fraction_norm": 0.0613,
-    "ndbi": 0.0549,
-    "swir1": 0.0503,
-    "impervious_fraction": 0.0489,
-    "nir": 0.0486,
-    "vegetation_fraction": 0.0442,
-    "red": 0.041,
-    "local_building_density": 0.0364,
-    "building_count": 0.0355,
-    "local_building_density_norm": 0.03,
-    "ndvi_std": 0.0208
+    "impervious_fraction_norm": 0.058,
+    "ndbi": 0.055,
+    "swir1": 0.0508,
+    "nir": 0.0507,
+    "impervious_fraction": 0.0504,
+    "vegetation_fraction": 0.0438,
+    "red": 0.0403,
+    "building_count": 0.0359,
+    "local_building_density": 0.035,
+    "local_building_density_norm": 0.0305,
+    "ndvi_std": 0.0217
   },
   "clusters": [
     {
@@ -223,7 +223,7 @@
       "n_cells": 42,
       "area_km2": 0.42,
       "buildings": 3196,
-      "mean_confidence": 0.9854,
+      "mean_confidence": 0.9858,
       "first_detected": 2019,
       "area_change_km2": 0.0
     },
@@ -232,7 +232,7 @@
       "n_cells": 8,
       "area_km2": 0.08,
       "buildings": 646,
-      "mean_confidence": 0.9956,
+      "mean_confidence": 0.995,
       "first_detected": 2019,
       "area_change_km2": 0.0
     },
@@ -241,7 +241,7 @@
       "n_cells": 42,
       "area_km2": 0.42,
       "buildings": 3083,
-      "mean_confidence": 0.988,
+      "mean_confidence": 0.9884,
       "first_detected": 2019,
       "area_change_km2": 0.12
     },
@@ -250,7 +250,7 @@
       "n_cells": 63,
       "area_km2": 0.63,
       "buildings": 5046,
-      "mean_confidence": 0.9831,
+      "mean_confidence": 0.9828,
       "first_detected": 2019,
       "area_change_km2": 0.33
     },
@@ -259,7 +259,7 @@
       "n_cells": 47,
       "area_km2": 0.47,
       "buildings": 3668,
-      "mean_confidence": 0.9924,
+      "mean_confidence": 0.9926,
       "first_detected": 2019,
       "area_change_km2": 0.0
     }

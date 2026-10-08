@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
 CLASSES = ["informal", "planned_residential", "high_rise", "commercial",
-           "industrial", "open_vegetated", "water"]
+           "industrial", "open_vegetated", "water", "sparse_low_development"]
 CLASS_IDX = {c: i for i, c in enumerate(CLASSES)}
 BANDS = ["blue", "green", "red", "nir", "swir1"]   # band order of every raster
 

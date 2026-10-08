@@ -1,43 +1,16 @@
-# UrbanPulse deployment
+# Deploy UrbanPulse v3
 
-## Fastest local demo
+1. Push the repository to GitHub.
+2. In Streamlit Community Cloud, deploy `app.py`.
+3. In the app settings, add Earth Engine secrets:
 
-```powershell
-py -3.12 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
-python -m urbanpulse.run demo
-streamlit run app.py
+```toml
+GEE_PROJECT_ID = "your-project-id"
+GEE_SERVICE_ACCOUNT = "service-account@your-project.iam.gserviceaccount.com"
+GEE_PRIVATE_KEY = "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
 ```
 
-Open the URL printed by Streamlit (normally http://localhost:8501).
+4. Ensure the Google Cloud project/service account has Earth Engine access and the Earth Engine API is enabled.
+5. Open the app, choose **Real AOI inference**, upload a GeoJSON of at least 10 km², choose a year, and run.
 
-## Docker
-
-```bash
-docker compose up --build
-```
-
-Then open http://localhost:8501.
-
-## Streamlit Community Cloud
-
-1. Push this folder to a GitHub repository.
-2. In Streamlit Community Cloud, create a new app.
-3. Select the repository and `app.py` as the entry point.
-4. Deploy.
-5. Commit your generated `results/` outputs if the hosted demo is meant to be a static showcase.
-
-For real satellite processing, do **not** put Earth Engine credentials in the repository. Run the Earth Engine export locally/through your secured environment, then publish only the derived outputs needed by the dashboard.
-
-## Render / Railway / generic Docker host
-
-Use the included `Dockerfile`. The application listens on port 8501.
-
-## Production architecture
-
-For the full hackathon system, keep Streamlit as the demo UI and run analysis jobs separately:
-
-`POST /analysis -> job queue -> Python worker -> results/ or object storage -> dashboard`
-
-Do not run Earth Engine exports or model training inside a web request.
+The app processes Sentinel-2 imagery in 1 km tiles and aggregates to 100 m cells. For large city-scale runs, move the worker layer out of Streamlit into a queued backend; keep Streamlit as the interactive front end.

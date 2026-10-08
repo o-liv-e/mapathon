@@ -1,4 +1,13 @@
 .venv/
 __pycache__/
 *.pyc
-.env
+.DS_Store
+.streamlit/
+data/satellite/*.tif
+data/buildings/*
+data/roads/*
+data/samples/*
+results/synthetic/
+.streamlit/secrets.toml
+models/*.joblib
+models/*.pkl
