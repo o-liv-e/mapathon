@@ -1,0 +1,16 @@
+numpy
+pandas
+geopandas>=1.0
+shapely>=2
+scipy
+scikit-learn
+rasterio
+pyproj
+earthengine-api
+osmnx
+mercantile
+requests
+pyarrow
+streamlit>=1.40
+folium
+streamlit-folium
