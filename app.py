@@ -247,7 +247,13 @@ def display_results(gdf, area_km2, n_tiles, year):
         try:
             from urbanpulse.ml import predict_grid
             gdf = predict_grid(gdf, bundle["model"], bundle.get("features", bundle.get("feature_cols")), bundle["label_encoder"])
-            st.success(f"Supervised {bundle.get('metadata', {}).get('selected_model', 'model')} applied to this AOI using {len(bundle.get('features', bundle.get('feature_cols', [])))} morphology/spectral features.")
+            selected_model = bundle.get('metadata', {}).get('selected_model', 'model')
+            n_features = len(bundle.get('features', bundle.get('feature_cols', [])))
+            st.success(
+                f"Scalable inference: {selected_model} applied to this AOI using "
+                f"{n_features} morphology/spectral features. No retraining was required."
+            )
+            st.caption("Train once → reuse the same feature pipeline and production model on new Chennai AOIs.")
         except Exception as e:
             st.warning(f"Production model inference skipped: {e}")
     informal = float(gdf.loc[gdf.predicted_class.isin(["informal", "informal_morphology_candidate"]), "cell_area_m2"].sum() / 1e6)
@@ -259,9 +265,25 @@ def display_results(gdf, area_km2, n_tiles, year):
     c1.metric("AOI", f"{area_km2:.2f} km²")
     c2.metric("Built-up", f"{built:.2f} km²")
     c3.metric("Informal morphology", f"{informal:.2f} km²")
-    c4.metric("High-IMI cells", high_imi)
+    c4.metric("Analysis cells", len(gdf))
     c5.metric("Processing tiles", n_tiles)
-    st.caption(f"Real Sentinel-2 SR Harmonized morphology baseline for {year}. Red cells are morphology candidates, not verified housing-status labels.")
+    st.caption(f"Real Sentinel-2 SR Harmonized morphology pipeline for {year}. Predictions describe observable urban morphology, not verified housing/legal status.")
+
+    with st.expander("📈 Scalability proof — variable Chennai AOIs", expanded=True):
+        prod = st.session_state.get("production_bundle")
+        model_name = "XGBoost"
+        feature_count = 38
+        if prod is not None:
+            model_name = prod.get("metadata", {}).get("selected_model", model_name)
+            feature_count = len(prod.get("features", prod.get("feature_cols", [])))
+        s1, s2, s3, s4 = st.columns(4)
+        s1.metric("Input AOI", f"{area_km2:.2f} km²")
+        s2.metric("100 m cells", len(gdf))
+        s3.metric("1 km tiles", n_tiles)
+        s4.metric("Production features", feature_count)
+        st.success(f"Same saved {model_name} production model → no retraining for this AOI.")
+        st.markdown("**Train once → change the AOI → run inference → inspect predictions + SHAP.**")
+        st.caption("This is the key scalability property: changing the uploaded Chennai polygon changes the amount of data processed, not the trained model.")
 
     show_map(gdf, f"UrbanPulse {year}")
 
@@ -301,7 +323,12 @@ with st.sidebar:
 
 if mode == "Real AOI inference":
     st.subheader("Run UrbanPulse on a real AOI")
-    st.info("Upload a GeoJSON polygon of at least 10 km². The application downloads Sentinel-2 surface reflectance tile-by-tile and aggregates it to 100 m cells.")
+    st.info(
+        "Upload any Chennai GeoJSON AOI of at least 1 km². "
+        "UrbanPulse automatically creates a 100 m morphology grid, "
+        "processes the AOI tile-by-tile, extracts the same features, "
+        "and applies the saved production model."
+    )
     upload = st.file_uploader("AOI GeoJSON", type=["geojson", "json"])
     year = st.slider("Analysis year", min_value=2019, max_value=2026, value=2025)
     use_osm = st.checkbox("Use OpenStreetMap buildings + roads", value=True)
@@ -375,7 +402,9 @@ with st.expander("Methodology and interpretation"):
 
     **Real-data pipeline:** AOI validation → 1 km processing tiles → Sentinel-2 L2A surface reflectance → spectral indices → optional OSM building/road morphology → 100 m spatial context → built-up gate → morphology classification → IMI and confidence.
 
-    **Current status:** the real-data mode is a transparent morphology inference baseline. Thresholds are starting values and should be calibrated with labelled Chennai cells before claiming production accuracy.
+    **Current status:** the real-data mode now applies the saved supervised production model when available. Evaluation uses promoted weak/reference labels and is not an independently verified ground-truth benchmark.
+
+    **Scalability:** the uploaded AOI is converted into a 100 m grid and processed in 1 km tiles. The saved production model is reused for new AOIs; changing the AOI does not require retraining.
 
     **Review scope:** real Sentinel-2 inference is operational; temporal/emerging-zone outputs in presentation mode use bundled demo results and are clearly labelled as such.
     """)

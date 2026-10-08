@@ -5,7 +5,7 @@ import geopandas as gpd
 import numpy as np
 from shapely.geometry import box
 
-MIN_AOI_KM2 = 10.0
+MIN_AOI_KM2 = 1.0
 
 
 def read_aoi(uploaded_file):
