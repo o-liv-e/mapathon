@@ -16,7 +16,7 @@ st.caption("Explainable urban morphology intelligence for informal-neighbourhood
 
 def show_map(gdf, layer_name="UrbanPulse"):
     import folium
-    from streamlit_folium import st_folium
+    import streamlit.components.v1 as components
     gdf = gdf.to_crs(4326)
     if gdf.empty:
         st.info("No features to display.")
@@ -34,7 +34,9 @@ def show_map(gdf, layer_name="UrbanPulse"):
     folium.GeoJson(gdf.to_json(), name=layer_name,
                    tooltip=folium.GeoJsonTooltip(fields=fields, aliases=[x.replace("_", " ").title() for x in fields])).add_to(m)
     folium.LayerControl().add_to(m)
-    st_folium(m, width=None, height=650)
+    # Render as a self-contained HTML iframe. This avoids the Streamlit-Folium
+    # widget rerun/blank-map issue and keeps the map visible after analysis.
+    components.html(m.get_root().render(), height=700, scrolling=True)
 
 
 def display_results(gdf, area_km2, n_tiles, title="Real analysis"):
@@ -65,7 +67,7 @@ if mode == "Real AOI inference":
     st.subheader("Run UrbanPulse on a real AOI")
     st.info("Upload a GeoJSON polygon of at least 10 km². The app downloads Sentinel-2 surface reflectance tile-by-tile and aggregates it to 100 m cells.")
     upload = st.file_uploader("AOI GeoJSON", type=["geojson", "json"])
-    year = st.slider("Analysis year", min_value=2017, max_value=2026, value=2025)
+    year = st.slider("Analysis year", min_value=2019, max_value=2026, value=2025)
     use_osm = st.checkbox("Use OpenStreetMap buildings + roads", value=True, help="Adds structural morphology features. This can increase runtime for large AOIs.")
     run = st.button("🚀 Run real analysis", type="primary", disabled=upload is None)
 
@@ -80,21 +82,47 @@ if mode == "Real AOI inference":
         try:
             from urbanpulse.aoi import read_aoi
             from urbanpulse.real_pipeline import run_real_inference
+
             aoi = read_aoi(upload)
             status = st.status("Running UrbanPulse…", expanded=True)
             bar = st.progress(0.0)
             with status:
                 st.write("Validating AOI…")
                 st.write("Initializing Earth Engine…")
+
                 def progress(x):
                     bar.progress(min(1.0, max(0.0, x)))
-                gdf, area, tiles = run_real_inference(aoi, year=year, include_osm=use_osm, progress=progress)
+
+                gdf, area, tiles = run_real_inference(
+                    aoi, year=year, include_osm=use_osm, progress=progress
+                )
                 st.write(f"Processed {tiles} × 1 km tiles.")
+
             status.update(label="Analysis complete", state="complete")
-            display_results(gdf, area, tiles, f"UrbanPulse {year}")
+
+            # Persist the completed analysis across Streamlit reruns.
+            # This keeps the map visible when st_folium or another widget
+            # causes the script to rerun.
+            st.session_state["real_results"] = {
+                "gdf": gdf,
+                "area": area,
+                "tiles": tiles,
+                "year": year,
+            }
         except Exception as e:
             st.error(str(e))
             st.exception(e)
+
+    # Render the latest real-analysis result on every rerun so the map does
+    # not disappear immediately after the initial analysis completes.
+    result = st.session_state.get("real_results")
+    if result is not None:
+        display_results(
+            result["gdf"],
+            result["area"],
+            result["tiles"],
+            f"UrbanPulse {result['year']}",
+        )
 else:
     stats_path = RESULTS / "stats.json"
     if not stats_path.exists():
