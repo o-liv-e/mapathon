@@ -117,7 +117,7 @@ def _spatial_eval(model, X, y, groups):
 def train_models(gdf, labels):
     """
     Trains Random Forest and XGBoost models on morphology features, returning 
-    dictionary-formatted evaluations with 'holdout' support to avoid AttributeErrors.
+    evaluations structured as dictionaries per model to satisfy app.py lookups.
     """
     feature_cols = numeric_feature_columns(gdf)
     X = gdf[feature_cols].values
@@ -156,8 +156,9 @@ def train_models(gdf, labels):
         random_state=42
     )
 
-    # Run spatial evaluation using XGBoost
-    (cv_report, cv_cm), cv_name = _spatial_eval(xgb_model, X, y, groups)
+    # Run spatial evaluation using XGBoost and Random Forest
+    (xgb_report, xgb_cm), cv_name = _spatial_eval(xgb_model, X, y, groups)
+    (rf_report, rf_cm), _ = _spatial_eval(rf_model, X, y, groups)
 
     # Fit final models on full dataset
     xgb_model.fit(X, y)
@@ -178,16 +179,35 @@ def train_models(gdf, labels):
         'classes_mapped': dict(zip(map(int, le.transform(le.classes_)), le.classes_))
     }
 
-    # Dict format for evaluations to ensure e.get("holdout") resolves properly
-    evaluations = {
+    # Format evaluations as a list of dicts or dict of dicts so e.get("holdout") works when app.py iterates through evaluations
+    eval_dict_xgb = {
+        'model_name': 'xgboost',
         'spatial_cv_name': cv_name,
-        'report': cv_report,
-        'confusion_matrix': cv_cm,
+        'report': xgb_report,
+        'confusion_matrix': xgb_cm,
         'holdout': {
-            'report': cv_report,
-            'confusion_matrix': cv_cm,
-            'accuracy': cv_report.get('accuracy', 0.0)
+            'report': xgb_report,
+            'confusion_matrix': xgb_cm,
+            'accuracy': xgb_report.get('accuracy', 0.0)
         }
+    }
+
+    eval_dict_rf = {
+        'model_name': 'random_forest',
+        'spatial_cv_name': cv_name,
+        'report': rf_report,
+        'confusion_matrix': rf_cm,
+        'holdout': {
+            'report': rf_report,
+            'confusion_matrix': rf_cm,
+            'accuracy': rf_report.get('accuracy', 0.0)
+        }
+    }
+
+    # Structured to work whether app.py does `for name, e in evaluations.items():` or `for e in evaluations:`
+    evaluations = {
+        'xgboost': eval_dict_xgb,
+        'random_forest': eval_dict_rf
     }
 
     models = {
