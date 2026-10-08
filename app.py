@@ -10,6 +10,7 @@ import streamlit as st
 st.set_page_config(page_title="UrbanPulse", page_icon="🛰️", layout="wide")
 ROOT = Path(__file__).parent
 RESULTS = ROOT / "results"
+MODEL_PATH = ROOT / "models" / "urbanpulse_production.joblib"
 
 st.title("🛰️ UrbanPulse")
 st.caption("Explainable Urban Morphology Intelligence — real Sentinel-2 + geospatial context")
@@ -115,6 +116,21 @@ def fingerprint(row):
 
 
 
+def rf_fingerprint(row, bundle):
+    """Show local TreeSHAP explanation for the selected production model."""
+    from urbanpulse.ml import explain_cell_prediction
+    model = bundle["model"]
+    features = bundle.get("features", bundle.get("feature_cols", []))
+    # row is a Series; convert to one-row DataFrame.
+    import pandas as pd
+    cell_df = pd.DataFrame([row])
+    exp, method = explain_cell_prediction(model, cell_df, features)
+    st.subheader("🔎 Why this cell was classified this way")
+    st.caption(f"{method}. Positive contribution supports the predicted class; negative contribution opposes it.")
+    st.bar_chart(exp.head(12).set_index("feature")["shap_value"])
+    st.dataframe(exp.head(12), use_container_width=True, hide_index=True)
+
+
 def apply_rf_bundle(gdf, bundle):
     from urbanpulse.ml import predict
     return predict(bundle["model"], bundle["features"], gdf)
@@ -145,7 +161,11 @@ def ml_training_panel(gdf, year):
                 n_rows = metadata.get("n_rows", len(gdf_labeled))
                 
                 st.success(f"Trained {len(models)} models on {n_rows} labelled cells. Selected: {selected}.")
-                st.info(f"Selected model: {selected}")
+                st.info(f"Selected model: {selected} — chosen by spatial CV macro-F1.")
+                MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
+                save_bundle(str(MODEL_PATH), models, cols, metadata)
+                st.session_state["production_bundle"] = {"model": models[selected], "features": cols, "label_encoder": metadata["label_encoder"], "metadata": metadata}
+                st.success(f"Production model saved: {MODEL_PATH.relative_to(ROOT)}")
 
                 # Build summary performance table defensively
                 rows = []
@@ -195,10 +215,10 @@ def ml_training_panel(gdf, year):
 
                 if selected_cell:
                     cell_data = gdf_predicted[gdf_predicted['cell_id'] == selected_cell] if 'cell_id' in gdf_predicted.columns else gdf_predicted.loc[[selected_cell]]
-                    explanation_df = explain_cell_prediction(selected_model_obj, cell_data, cols)
-                    
-                    st.write(f"**Predicted Class:** `{cell_data['predicted_class'].values[0]}` | **IMI Score:** `{cell_data['imi'].values[0]:.3f}`")
-                    st.bar_chart(explanation_df.set_index('feature')['shap_value'])
+                    explanation_df, explain_method = explain_cell_prediction(selected_model_obj, cell_data, cols)
+                    st.write(f"**Predicted Class:** `{cell_data['predicted_class'].values[0]}` | **Informal probability:** `{cell_data['informal_probability'].values[0]:.3f}` | **Confidence:** `{cell_data['confidence'].values[0]:.3f}`")
+                    st.caption(f"Explanation method: {explain_method}. Positive values support the predicted class; negative values oppose it.")
+                    st.bar_chart(explanation_df.head(12).set_index('feature')['shap_value'])
 
                 # GeoJSON Export
                 st.subheader("📥 Export Results")
@@ -214,8 +234,22 @@ def ml_training_panel(gdf, year):
                 st.error(f"ML training failed: {e}")
                 
 def display_results(gdf, area_km2, n_tiles, year):
-    if st.session_state.get("use_rf") and st.session_state.get("rf_bundle") is not None:
-        gdf = apply_rf_bundle(gdf, st.session_state["rf_bundle"])
+    bundle = st.session_state.get("production_bundle")
+    if bundle is None and MODEL_PATH.exists():
+        try:
+            import pickle
+            with open(MODEL_PATH, "rb") as f:
+                bundle = pickle.load(f)
+            st.session_state["production_bundle"] = bundle
+        except Exception as e:
+            st.warning(f"Saved production model could not be loaded: {e}")
+    if bundle is not None:
+        try:
+            from urbanpulse.ml import predict_grid
+            gdf = predict_grid(gdf, bundle["model"], bundle.get("features", bundle.get("feature_cols")), bundle["label_encoder"])
+            st.success(f"Supervised {bundle.get('metadata', {}).get('selected_model', 'model')} applied to this AOI using {len(bundle.get('features', bundle.get('feature_cols', [])))} morphology/spectral features.")
+        except Exception as e:
+            st.warning(f"Production model inference skipped: {e}")
     informal = float(gdf.loc[gdf.predicted_class.isin(["informal", "informal_morphology_candidate"]), "cell_area_m2"].sum() / 1e6)
     built = float(gdf.loc[gdf.built_gate, "cell_area_m2"].sum() / 1e6)
     high_imi = int((gdf["imi"] >= 0.45).sum())
@@ -242,8 +276,8 @@ def display_results(gdf, area_km2, n_tiles, year):
         selected = st.selectbox("Inspect a high-information cell", range(len(labels)), format_func=lambda i: labels[i])
         selected_row = choices.iloc[selected]
         fingerprint(selected_row)
-        if st.session_state.get("use_rf") and st.session_state.get("rf_bundle") is not None:
-            rf_fingerprint(selected_row, st.session_state["rf_bundle"])
+        if st.session_state.get("production_bundle") is not None:
+            rf_fingerprint(selected_row, st.session_state["production_bundle"])
 
     st.subheader("Most informative cells")
     cols = [c for c in [

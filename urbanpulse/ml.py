@@ -8,295 +8,178 @@ from sklearn.preprocessing import LabelEncoder
 from sklearn.model_selection import StratifiedGroupKFold, cross_val_predict
 from sklearn.metrics import classification_report, confusion_matrix
 
-# Default morphology feature column list
-DEFAULT_NUMERIC_FEATURE_COLUMNS = [
-    'building_count',
-    'building_density',
-    'building_irregularity',
-    'impervious_fraction',
-    'ndvi',
-    'ndbi',
-    'built_up_intensity'
-]
-
+# Metadata / leakage columns excluded from model features.  Numeric morphology,
+# spectral, surface and network features are discovered automatically so the
+# same model code scales when new feature columns are added to the pipeline.
+FEATURE_EXCLUDE = {
+    'cell_id', 'id', 'row', 'col', 'cell_area_m2', 'year', 'cell_uid',
+    'geometry', 'label', 'predicted_class', 'group_id', 'imi',
+    'informal_probability', 'confidence'
+}
 
 class NumericFeatureColumns(list):
-    """
-    Hybrid object that acts as a list when iterated or indexed,
-    and as a function when called with a DataFrame: numeric_feature_columns(df).
-    """
     def __init__(self, default_cols=None):
-        cols = default_cols or DEFAULT_NUMERIC_FEATURE_COLUMNS
-        super().__init__(cols)
+        super().__init__(default_cols or [])
 
     def __call__(self, df=None):
-        if df is not None:
-            existing = [col for col in self if col in df.columns]
-            if existing:
-                return existing
-            
-            # Fallback: extract numeric features excluding metadata/target fields
-            exclude = {'cell_id', 'geometry', 'label', 'predicted_class', 'group_id', 'year', 'imi', 'confidence'}
-            return [
-                col for col in df.select_dtypes(include=[np.number]).columns 
-                if col not in exclude
-            ]
-        return list(self)
+        if df is None:
+            return list(self)
+        return [c for c in df.select_dtypes(include=[np.number]).columns
+                if c not in FEATURE_EXCLUDE]
 
-
-# Exported object expected by app.py imports
 numeric_feature_columns = NumericFeatureColumns()
 
-
 def load_labels(file_path_or_buffer):
-    """
-    Loads labeled training data from a CSV, GeoJSON, or GeoPackage file/buffer into a DataFrame.
-    """
     if isinstance(file_path_or_buffer, str):
-        if file_path_or_buffer.endswith('.csv'):
+        if file_path_or_buffer.lower().endswith('.csv'):
             return pd.read_csv(file_path_or_buffer)
-        else:
-            import geopandas as gpd
-            return gpd.read_file(file_path_or_buffer)
-    else:
-        try:
-            return pd.read_csv(file_path_or_buffer)
-        except Exception:
-            import geopandas as gpd
-            return gpd.read_file(file_path_or_buffer)
-
+        import geopandas as gpd
+        return gpd.read_file(file_path_or_buffer)
+    try:
+        return pd.read_csv(file_path_or_buffer)
+    except Exception:
+        import geopandas as gpd
+        return gpd.read_file(file_path_or_buffer)
 
 def prepare_labels(gdf, labels_df):
-    """
-    Merges user-provided labels or promoted weak labels into the main grid GeoDataFrame.
-    """
     df = gdf.copy()
     if isinstance(labels_df, pd.DataFrame) and 'label' in labels_df.columns:
         if 'cell_id' in labels_df.columns and 'cell_id' in df.columns:
-            df = df.merge(labels_df[['cell_id', 'label']], on='cell_id', how='left', suffixes=('', '_new'))
-            if 'label_new' in df.columns:
-                df['label'] = df['label_new'].combine_first(df['label'])
-                df.drop(columns=['label_new'], inplace=True)
+            lab = labels_df[['cell_id', 'label']].copy()
+            df = df.drop(columns=['label'], errors='ignore').merge(lab, on='cell_id', how='left')
         elif len(labels_df) == len(df):
             df['label'] = labels_df['label'].values
-            
-    # Clean and filter out rows missing labels
     target_col = 'label' if 'label' in df.columns else None
-    if not target_col:
+    if target_col is None:
         for candidate in ['predicted_class', 'class', 'auto_label']:
             if candidate in df.columns:
                 target_col = candidate
                 break
-
     if target_col:
-        labeled_gdf = df.dropna(subset=[target_col]).copy()
-        return labeled_gdf, labeled_gdf[target_col].values
-    
+        out = df.dropna(subset=[target_col]).copy()
+        out = out[out[target_col].astype(str).str.len() > 0].copy()
+        return out, out[target_col].astype(str).values
     return df, None
 
+def _spatial_groups(gdf, block_size_cells=4):
+    if {'row', 'col'}.issubset(gdf.columns):
+        return ((gdf['row'].astype(int) // block_size_cells) * 100000 +
+                (gdf['col'].astype(int) // block_size_cells)).to_numpy()
+    if 'group_id' in gdf.columns:
+        return gdf['group_id'].to_numpy()
+    # Last-resort fallback; app data normally contains row/col.
+    return np.arange(len(gdf))
 
-def _spatial_eval(model, X, y, groups):
-    """
-    Performs spatial cross-validation using StratifiedGroupKFold to prevent data leakage 
-    and maintain class proportions across spatial clusters.
-    """
+def _spatial_eval(model, X, y, groups, seed=42):
     n_groups = len(np.unique(groups))
-    n_splits = max(2, min(5, n_groups))
-    
-    cv = StratifiedGroupKFold(n_splits=n_splits)
-    
-    # Generate predictions across spatial folds
+    if n_groups < 2:
+        raise ValueError('Need at least 2 spatial groups for validation.')
+    n_splits = min(5, n_groups)
+    cv = StratifiedGroupKFold(n_splits=n_splits, shuffle=True, random_state=seed)
     pred = cross_val_predict(model, X, y, cv=cv, groups=groups, n_jobs=1)
-    
-    cv_report = classification_report(y, pred, output_dict=True)
-    cv_cm = confusion_matrix(y, pred)
-    
-    return (cv_report, cv_cm), "StratifiedGroupKFold"
-
+    return (classification_report(y, pred, output_dict=True, zero_division=0),
+            confusion_matrix(y, pred), n_splits)
 
 def train_models(gdf, labels):
-    """
-    Trains Random Forest and XGBoost models on morphology features, encoding
-    discontinuous target indices and populating required metadata.
-    """
     feature_cols = numeric_feature_columns(gdf)
-    X = gdf[feature_cols].values
+    if not feature_cols:
+        raise ValueError('No numeric morphology features found.')
 
-    # Robust target label extraction
-    if isinstance(labels, np.ndarray):
-        y_raw = labels
-    elif isinstance(labels, (pd.Series, pd.DataFrame)):
-        y_raw = labels.values.ravel()
-    elif 'label' in gdf.columns:
-        y_raw = gdf['label'].values
-    else:
-        # Fallback to candidate label column names
-        for col in ['predicted_class', 'class', 'auto_label']:
-            if col in gdf.columns:
-                y_raw = gdf[col].values
-                break
-        else:
-            raise KeyError("Could not locate a target label column in 'gdf' or 'labels'. Expected 'label' column.")
+    work = gdf.copy()
+    if labels is not None:
+        work['label'] = np.asarray(labels).ravel()
+    work = work.dropna(subset=['label']).copy()
+    work['label'] = work['label'].astype(str)
+    X = work[feature_cols].replace([np.inf, -np.inf], np.nan).fillna(0.0)
 
-    groups = gdf['group_id'].values if 'group_id' in gdf.columns else np.arange(len(gdf))
-
-    # Calculate raw class counts for Streamlit rendering
-    unique_labels, counts = np.unique(y_raw, return_counts=True)
-    label_counts_dict = dict(zip(map(str, unique_labels), map(int, counts)))
-
-    # Encode target labels into contiguous zero-indexed integers [0, 1, 2, ...]
     le = LabelEncoder()
-    y = le.fit_transform(y_raw)
+    y = le.fit_transform(work['label'].to_numpy())
+    if len(le.classes_) < 2:
+        raise ValueError('Training requires at least 2 classes.')
+    groups = _spatial_groups(work, block_size_cells=4)
 
-    # Initialize XGBoost and Random Forest classifiers
     xgb_model = xgb.XGBClassifier(
-        objective='multi:softprob',
-        random_state=42,
-        eval_metric='mlogloss'
+        n_estimators=250, max_depth=5, learning_rate=0.05,
+        subsample=0.85, colsample_bytree=0.85, min_child_weight=2,
+        objective='multi:softprob', eval_metric='mlogloss',
+        tree_method='hist', n_jobs=-1, random_state=42
     )
-    
     rf_model = RandomForestClassifier(
-        n_estimators=100,
-        random_state=42
+        n_estimators=300, min_samples_leaf=2, max_features='sqrt',
+        class_weight='balanced_subsample', n_jobs=-1, random_state=42
     )
 
-    # Run spatial evaluation
-    (xgb_report, xgb_cm), cv_name = _spatial_eval(xgb_model, X, y, groups)
-    (rf_report, rf_cm), _ = _spatial_eval(rf_model, X, y, groups)
-
-    # Fit final models on full dataset
+    xgb_report, xgb_cm, n_splits = _spatial_eval(xgb_model, X, y, groups)
+    rf_report, rf_cm, _ = _spatial_eval(rf_model, X, y, groups)
     xgb_model.fit(X, y)
     rf_model.fit(X, y)
 
-    n_rows = len(gdf)
-    metadata = {
-        'selected_model': 'xgboost',
-        'n_rows': n_rows,
-        'n_samples': n_rows,
-        'label_counts': label_counts_dict,
-        'label_encoder': le,
-        'classes': le.classes_.tolist()
-    }
-
-    training_table = {
-        'feature_count': X.shape[1],
-        'sample_count': n_rows,
-        'classes_mapped': dict(zip(map(int, le.transform(le.classes_)), le.classes_))
-    }
-
-    # Format evaluations to satisfy app.py rendering
-    eval_dict_xgb = {
-        'model_name': 'xgboost',
-        'spatial_cv_name': cv_name,
-        'cv_report': xgb_report,
-        'cv_cm': xgb_cm,
-        'holdout': {
-            'report': xgb_report,
-            'confusion_matrix': xgb_cm,
-            'accuracy': xgb_report.get('accuracy', 0.0)
-        }
-    }
-
-    eval_dict_rf = {
-        'model_name': 'random_forest',
-        'spatial_cv_name': cv_name,
-        'cv_report': rf_report,
-        'cv_cm': rf_cm,
-        'holdout': {
-            'report': rf_report,
-            'confusion_matrix': rf_cm,
-            'accuracy': rf_report.get('accuracy', 0.0)
-        }
-    }
-
     evaluations = {
-        'xgboost': eval_dict_xgb,
-        'random_forest': eval_dict_rf
+        'xgboost': {'model_name':'xgboost','spatial_cv_name':f'StratifiedGroupKFold ({n_splits} spatial folds)',
+                    'cv_report':xgb_report,'cv_cm':xgb_cm},
+        'random_forest': {'model_name':'random_forest','spatial_cv_name':f'StratifiedGroupKFold ({n_splits} spatial folds)',
+                          'cv_report':rf_report,'cv_cm':rf_cm}
     }
-
-    models = {
-        'xgboost': xgb_model,
-        'random_forest': rf_model
+    scores = {k: v['cv_report']['macro avg']['f1-score'] for k,v in evaluations.items()}
+    selected = max(scores, key=scores.get)
+    models = {'xgboost': xgb_model, 'random_forest': rf_model}
+    counts = work['label'].value_counts().to_dict()
+    metadata = {
+        'selected_model': selected, 'n_rows': len(work), 'n_samples': len(work),
+        'label_counts': {str(k): int(v) for k,v in counts.items()},
+        'label_encoder': le, 'classes': le.classes_.tolist(),
+        'spatial_block_cells': 4, 'spatial_groups': int(len(np.unique(groups))),
+        'feature_count': len(feature_cols),
+        'label_note': 'Promoted weak/reference labels; not an independently verified ground-truth benchmark.'
     }
-
+    training_table = {'feature_count':len(feature_cols),'sample_count':len(work),
+                      'classes_mapped':dict(zip(range(len(le.classes_)), le.classes_))}
     return models, feature_cols, evaluations, metadata, training_table
 
-
 def predict_grid(gdf, model, feature_cols, label_encoder):
-    """
-    Runs spatial inference over all grid cells, returning predicted classes, 
-    class probabilities, and an Informal Morphology Index (IMI) score.
-    """
     df = gdf.copy()
-    X = df[feature_cols].values
-
-    # Predict discrete class indices and probabilities
+    X = df[feature_cols].replace([np.inf,-np.inf], np.nan).fillna(0.0)
     preds = model.predict(X)
     probs = model.predict_proba(X)
-
-    # Decode class indices back to original string labels
-    df['predicted_class'] = label_encoder.inverse_transform(preds)
-    
-    # Extract probability for the 'informal' class to use as the IMI score
+    df['predicted_class'] = label_encoder.inverse_transform(preds.astype(int))
     classes = list(label_encoder.classes_)
     if 'informal' in classes:
-        informal_idx = classes.index('informal')
-        df['imi'] = probs[:, informal_idx]
+        df['informal_probability'] = probs[:, classes.index('informal')]
     else:
-        # Fallback to max probability if 'informal' isn't explicitly named
-        df['imi'] = probs.max(axis=1)
-
+        df['informal_probability'] = probs.max(axis=1)
     df['confidence'] = probs.max(axis=1)
+    df['imi'] = df['informal_probability']
     return df
 
-
 def explain_cell_prediction(model, cell_features, feature_cols):
-    """
-    Computes SHAP values or feature contributions for a single grid cell,
-    ensuring all output arrays are flattened to 1D to prevent DataFrame errors.
-    """
-    X_single = cell_features[feature_cols].values.reshape(1, -1)
-    
+    X_single = cell_features[feature_cols].replace([np.inf,-np.inf], np.nan).fillna(0.0).values.reshape(1,-1)
     try:
         import shap
         explainer = shap.TreeExplainer(model)
-        shap_values = explainer.shap_values(X_single)
-        
-        # Handle multi-class SHAP output lists or multi-dimensional arrays
-        if isinstance(shap_values, list):
-            vals = np.array(shap_values[0]).flatten()
-        elif isinstance(shap_values, np.ndarray):
-            vals = shap_values.flatten()
+        raw = explainer.shap_values(X_single)
+        arr = np.asarray(raw)
+        pred = int(model.predict(X_single)[0])
+        if arr.ndim == 3:
+            vals = arr[0, :, pred]
+        elif arr.ndim == 2:
+            vals = arr[0]
         else:
-            vals = np.array(shap_values).flatten()
-            
+            vals = arr.reshape(-1)[:len(feature_cols)]
+        method = 'TreeSHAP'
     except Exception:
-        # Fallback feature contribution estimation
-        importances = getattr(model, 'feature_importances_', np.ones(len(feature_cols)) / len(feature_cols))
-        vals = (importances * X_single[0]).flatten()
-
-    # Ensure all inputs to pd.DataFrame are flattened 1D arrays
-    feature_vals = X_single.flatten()
-    vals = vals[:len(feature_cols)]  # Slice to match feature_cols length
-
-    importance_df = pd.DataFrame({
-        'feature': list(feature_cols),
-        'shap_value': vals.tolist(),
-        'feature_value': feature_vals.tolist()
-    }).sort_values(by='shap_value', key=abs, ascending=False)
-
-    return importance_df
+        imp = getattr(model, 'feature_importances_', np.ones(len(feature_cols))/len(feature_cols))
+        vals = imp * X_single[0]
+        method = 'feature-importance fallback'
+    df = pd.DataFrame({'feature':feature_cols,'shap_value':np.asarray(vals).flatten()[:len(feature_cols)],
+                       'feature_value':X_single.flatten()[:len(feature_cols)]})
+    return df.sort_values('shap_value', key=lambda s: s.abs(), ascending=False), method
 
 def save_bundle(output_path, models, feature_cols, metadata):
-    """
-    Serializes trained models, metadata, and feature lists to disk.
-    """
-    bundle = {
-        'models': models,
-        'feature_cols': feature_cols,
-        'metadata': metadata
-    }
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    with open(output_path, 'wb') as f:
+    bundle = {'model': models[metadata['selected_model']], 'models': models,
+              'features': feature_cols, 'feature_cols': feature_cols,
+              'metadata': metadata, 'label_encoder': metadata['label_encoder']}
+    out = os.path.abspath(output_path)
+    os.makedirs(os.path.dirname(out), exist_ok=True)
+    with open(out, 'wb') as f:
         pickle.dump(bundle, f)
-    return output_path
+    return out

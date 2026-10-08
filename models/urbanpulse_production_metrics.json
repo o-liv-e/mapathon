@@ -1,0 +1,66 @@
+{
+  "selected_model": "xgboost",
+  "features": [
+    "building_count",
+    "building_area",
+    "building_density",
+    "mean_building_area",
+    "footprint_cv",
+    "compactness",
+    "rectangularity",
+    "small_bldg_frac",
+    "mean_nn_dist",
+    "road_density",
+    "road_segments",
+    "dist_major_road",
+    "blue",
+    "green",
+    "red",
+    "nir",
+    "swir1",
+    "ndvi",
+    "ndbi",
+    "ndwi",
+    "vegetation_fraction",
+    "impervious_fraction",
+    "water_fraction",
+    "ndvi_std",
+    "ndbi_std",
+    "nir_std",
+    "open_space_fraction",
+    "building_irregularity",
+    "small_building_fraction",
+    "building_spacing_score",
+    "footprint_irregularity",
+    "building_density_norm",
+    "building_irregularity_norm",
+    "small_building_fraction_norm",
+    "building_spacing_norm",
+    "footprint_irregularity_norm",
+    "impervious_fraction_norm",
+    "ndbi_norm"
+  ],
+  "classes": [
+    "informal",
+    "open_vegetated",
+    "sparse_low_development"
+  ],
+  "n_samples": 371,
+  "label_counts": {
+    "sparse_low_development": 223,
+    "open_vegetated": 81,
+    "informal": 67
+  },
+  "metrics": {
+    "random_forest": {
+      "macro_f1": 0.9183002468958334,
+      "weighted_f1": 0.9334948074213331,
+      "accuracy": 0.9353099730458221
+    },
+    "xgboost": {
+      "macro_f1": 0.9282904329404574,
+      "weighted_f1": 0.9421598135278272,
+      "accuracy": 0.9433962264150944
+    }
+  }
+}
