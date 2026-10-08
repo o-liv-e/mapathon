@@ -50,71 +50,63 @@ def sentinel_composite(region, year):
            .map(_mask_s2))
     if col.size().getInfo() == 0:
         raise RuntimeError(f"No usable Sentinel-2 scenes found for {year} in the selected AOI.")
-    # Keep the native Sentinel-2 band names. download_tile() requests these
-    # bands directly, and compute_features() consumes the downloaded bands
-    # by position. Renaming them here would make the later B2/B3/... request
-    # fail with: Image has no band named "B2".
-    image = col.select(BANDS_IN).median().divide(10000)
-
-    available = image.bandNames().getInfo()
-    missing = [band for band in BANDS_IN if band not in available]
-    if missing:
-        raise RuntimeError(
-            f"Sentinel-2 composite is missing bands: {missing}. "
-            f"Available bands: {available}"
-        )
-
-    print(f"Sentinel-2 composite bands: {available}")
-    return image
+    return col.select(BANDS_IN, BANDS_OUT).median().divide(10000)
 
 
 def download_tile(image, geometry, crs):
-    """Download a bounded Sentinel-2 tile at 10 m resolution.
+    """Download one bounded Sentinel-2 tile at 10 m resolution.
 
-    The processing tiles are stored in the AOI's projected CRS, while
-    Earth Engine download regions must be supplied as geographic
-    coordinates. Always reproject the tile explicitly to EPSG:4326.
+    The processing tiles are stored in the local projected CRS, while Earth
+    Engine regions are supplied as WGS84 GeoJSON.  The download itself uses
+    the projected CRS so that ``scale=10`` means 10 metres, not 10 degrees.
     """
-    # ``row.geometry`` is a Shapely geometry, so it does not have
-    # ``to_crs()``. Build a GeoSeries with the known source CRS and
-    # explicitly transform it to WGS84 before sending it to Earth Engine.
-    if hasattr(geometry, "to_crs"):
-        geom_wgs84 = geometry.to_crs("EPSG:4326")
-        geom_wgs84 = geom_wgs84.geometry.iloc[0]
-    else:
-        geom_wgs84 = gpd.GeoSeries(
-            [geometry],
-            crs=crs,
-        ).to_crs("EPSG:4326").iloc[0]
+    from pyproj import Transformer
+    from shapely.geometry import mapping
 
-    # Use the Earth Engine geometry itself as the download region.
-    # getInfo() converts it to a plain GeoJSON geometry with geographic
-    # coordinates, avoiding the unbounded-image error from getDownloadURL.
-    ee_region = ee.Geometry(geom_wgs84.__geo_interface__)
-    region = ee_region.getInfo()
+    # ``geometry`` is a Shapely geometry from make_tiles(), so it does not
+    # have a GeoPandas ``to_crs`` method. Transform its coordinates explicitly.
+    source_crs = crs
+    transformer = Transformer.from_crs(
+        source_crs,
+        "EPSG:4326",
+        always_xy=True,
+    )
 
+    def transform_coords(coords):
+        return [transformer.transform(x, y) for x, y in coords]
+
+    geom_wgs84 = geometry
+    # Shapely's transform handles Polygon/MultiPolygon/other geometry types.
+    from shapely.ops import transform as shapely_transform
+    geom_wgs84 = shapely_transform(
+        transformer.transform,
+        geometry,
+    )
+
+    region = mapping(geom_wgs84)
+    ee_region = ee.Geometry(region)
+
+    # Keep only the six Sentinel-2 bands used by the feature engine.
     bounded = image.clip(ee_region).select(BANDS_IN)
 
-    available = bounded.bandNames().getInfo()
-    missing = [band for band in BANDS_IN if band not in available]
-    if missing:
-        raise RuntimeError(
-            f"Cannot download Sentinel-2 tile. Missing bands: {missing}. "
-            f"Available bands: {available}"
-        )
-
-    print(f"Download image bands: {available}")
+    # Use the local projected CRS for the pixel grid. This is critical: using
+    # EPSG:4326 together with scale=10 asks Earth Engine for 10-degree pixels,
+    # which can create an enormous raster and exhaust memory.
+    download_crs = crs.to_string() if hasattr(crs, "to_string") else str(crs)
 
     url = bounded.getDownloadURL({
         "name": "urbanpulse_s2",
         "region": region,
         "scale": 10,
-        "crs": "EPSG:4326",
+        "crs": download_crs,
         "filePerBand": False,
         "format": "GEO_TIFF",
     })
 
-    response = requests.get(url, timeout=180)
+    response = requests.get(
+        url,
+        timeout=180,
+    )
     response.raise_for_status()
     return response.content
 
