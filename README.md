@@ -27,17 +27,21 @@ GEE_PRIVATE_KEY = "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n
 
 Never commit the private key. Local development can use the same secrets file or normal Earth Engine authentication.
 
-## Final ML step
+## Supervised ML step
 
-The real-data mode currently uses a transparent morphology baseline so the app can process an AOI immediately. For the final scientific model:
+The real-data mode starts with a transparent morphology baseline. The supervised ML module is now implemented in `urbanpulse/ml.py` and can be trained from independent reference labels:
 
-1. collect labelled Chennai cells for informal / planned / high-rise / commercial / industrial / open / water / sparse;
-2. compute the same features;
-3. train the Random Forest in `urbanpulse.model`;
-4. use spatial-block cross-validation;
-5. save the trained model and run inference on arbitrary AOIs.
+1. download the 100 m labeling template from the Streamlit ML panel;
+2. label Chennai cells in QGIS using independent high-resolution/reference evidence;
+3. upload the labelled GeoJSON/CSV;
+4. train the Random Forest with spatial-block cross-validation;
+5. inspect macro-F1, per-class metrics and feature importance;
+6. apply the trained model to the current AOI;
+7. inspect TreeSHAP explanations for individual cells.
 
-Synthetic demo accuracy must not be presented as Chennai accuracy.
+The target classes are defined in `urbanpulse/config.py`: informal, planned_residential, high_rise, commercial, industrial, open_vegetated, water and sparse_low_development.
+
+**Important:** the heuristic IMI output is not used as ground truth. Labels must come from independent reference interpretation. Synthetic demo accuracy must not be presented as Chennai accuracy.
 
 ### v3.1 Sentinel-2 download fix
 

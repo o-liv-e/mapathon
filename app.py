@@ -3,6 +3,7 @@ Run: streamlit run app.py
 """
 import json
 from pathlib import Path
+import io
 import pandas as pd
 import streamlit as st
 
@@ -113,7 +114,74 @@ def fingerprint(row):
     st.caption(str(row.get("explanation", "No explanation available.")))
 
 
+
+def apply_rf_bundle(gdf, bundle):
+    from urbanpulse.ml import predict
+    return predict(bundle["model"], bundle["features"], gdf)
+
+
+def ml_training_panel(gdf, year):
+    """Phase A/B: create labels and train/compare RF + XGBoost."""
+    st.subheader("🤖 Phase A/B — Training dataset + supervised ML")
+    st.caption("Independent human/reference labels are required. The heuristic IMI class is never used as a training target.")
+
+    from urbanpulse.ml import numeric_feature_columns
+    feature_cols = numeric_feature_columns(gdf)
+    feature_table = gdf[[c for c in ["cell_uid", "cell_id", "year", "row", "col"] + feature_cols if c in gdf.columns]].copy()
+    st.download_button("⬇️ Download feature table", feature_table.to_csv(index=False), file_name=f"urbanpulse_features_{year}.csv", mime="text/csv")
+
+    label_template = gdf[[c for c in ["cell_uid", "cell_id", "row", "col", "year", "geometry"] if c in gdf.columns]].copy()
+    if "year" not in label_template.columns: label_template["year"] = int(year)
+    label_template["label"] = ""
+    template = label_template.to_crs(4326).to_json()
+    st.download_button("⬇️ Download 100 m labelling template for QGIS", template, file_name=f"urbanpulse_labels_{year}.geojson", mime="application/geo+json")
+    st.info("QGIS labels: informal, planned_residential, high_rise, commercial, industrial, open_vegetated, water, sparse_low_development. Label hard negatives deliberately.")
+
+    labels_file = st.file_uploader("Upload labelled cells/polygons", type=["geojson","json","csv","gpkg"], key="ml_labels")
+    train_clicked = st.button("🧠 Train Random Forest + XGBoost", type="primary", disabled=labels_file is None)
+    if train_clicked and labels_file is not None:
+        try:
+            from urbanpulse.ml import load_labels, prepare_labels, train_models, save_bundle
+            labels_raw=load_labels(labels_file); labels=prepare_labels(labels_raw,gdf)
+            models, cols, evaluations, metadata, training_table = train_models(gdf,labels)
+            for name,model in models.items():
+                save_bundle(ROOT/"models"/f"urbanpulse_{name}.joblib",model,cols,metadata)
+            selected=metadata["selected_model"]
+            st.session_state["ml_bundle"]={"model":models[selected],"features":cols,"metadata":metadata,"name":selected}
+            st.session_state["ml_evaluations"]=evaluations
+            st.session_state["ml_training_table"]=training_table
+            st.success(f"Trained {len(models)} models on {metadata['n_rows']} labelled cells. Selected: {selected}.")
+        except Exception as e:
+            st.error(f"ML training failed: {e}"); st.exception(e)
+
+    bundle=st.session_state.get("ml_bundle")
+    if bundle is not None:
+        meta=bundle["metadata"]; evals=st.session_state["ml_evaluations"]
+        st.success(f"Selected model: {meta['selected_model']}")
+        rows=[]
+        for name,e in evals.items():
+            h=e.get("holdout")
+            rows.append({"Model":name,"Spatial CV Macro-F1":e["cv_report"]["macro avg"]["f1-score"],"Spatial CV Weighted-F1":e["cv_report"]["weighted avg"]["f1-score"],"Spatial Holdout Macro-F1":(h["report"]["macro avg"]["f1-score"] if h else None)})
+        st.dataframe(pd.DataFrame(rows),use_container_width=True)
+        st.write("**Label counts:**",meta["label_counts"])
+        if st.button("Use selected ML model for the current map"):
+            st.session_state["rf_bundle"]=bundle
+            st.session_state["use_rf"]=True
+            st.rerun()
+
+
+def rf_fingerprint(row, bundle):
+    from urbanpulse.ml import explain_row
+    explanation = explain_row(bundle["model"], bundle["features"], row)
+    st.subheader("Random Forest explanation")
+    st.caption(f"Explanation method: **{explanation['method']}**")
+    for name, value in explanation["items"]:
+        direction = "supports" if value >= 0 else "pushes away from"
+        st.write(f"**{name.replace('_', ' ').title()}** — {value:+.3f} ({direction} the predicted class)")
+
 def display_results(gdf, area_km2, n_tiles, year):
+    if st.session_state.get("use_rf") and st.session_state.get("rf_bundle") is not None:
+        gdf = apply_rf_bundle(gdf, st.session_state["rf_bundle"])
     informal = float(gdf.loc[gdf.predicted_class.isin(["informal", "informal_morphology_candidate"]), "cell_area_m2"].sum() / 1e6)
     built = float(gdf.loc[gdf.built_gate, "cell_area_m2"].sum() / 1e6)
     high_imi = int((gdf["imi"] >= 0.45).sum())
@@ -138,7 +206,10 @@ def display_results(gdf, area_km2, n_tiles, year):
         choices = gdf.sort_values("imi", ascending=False).head(100)
         labels = [f"{r.cell_id} — {r.predicted_class} — IMI {r.imi:.2f}" for _, r in choices.iterrows()]
         selected = st.selectbox("Inspect a high-information cell", range(len(labels)), format_func=lambda i: labels[i])
-        fingerprint(choices.iloc[selected])
+        selected_row = choices.iloc[selected]
+        fingerprint(selected_row)
+        if st.session_state.get("use_rf") and st.session_state.get("rf_bundle") is not None:
+            rf_fingerprint(selected_row, st.session_state["rf_bundle"])
 
     st.subheader("Most informative cells")
     cols = [c for c in [
@@ -158,6 +229,7 @@ with st.sidebar:
     st.success("100 m morphology grid")
     st.success("Explainable IMI + confidence")
     st.success("OSM structural context")
+    st.info("RF + XGBoost + spatial validation + SHAP module ready")
 
 if mode == "Real AOI inference":
     st.subheader("Run UrbanPulse on a real AOI")
@@ -194,6 +266,8 @@ if mode == "Real AOI inference":
     result = st.session_state.get("real_results")
     if result is not None:
         display_results(result["gdf"], result["area"], result["tiles"], result["year"])
+        with st.expander("🤖 Train the supervised Random Forest", expanded=False):
+            ml_training_panel(result["gdf"], result["year"])
 
 else:
     st.subheader("🎤 Hackathon review / presentation mode")

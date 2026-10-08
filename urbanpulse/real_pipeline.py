@@ -191,6 +191,10 @@ def run_real_inference(aoi_ll, year=2025, include_osm=True, progress=None):
         0.50,
     )
     feats = add_cell_explanations(feats)
+    feats["year"] = int(year)
     out = cells.merge(feats, on="cell_id", how="left")
     out = gpd.GeoDataFrame(out, geometry="geometry", crs=aoi_p.crs)
+    # Stable cross-AOI identifier for labelled training datasets.
+    c_ll = out.to_crs(4326).geometry.centroid
+    out["cell_uid"] = [f"{int(year)}_{x:.5f}_{y:.5f}" for x, y in zip(c_ll.x, c_ll.y)]
     return out, area, len(tiles)

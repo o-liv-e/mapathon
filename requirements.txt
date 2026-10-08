@@ -14,3 +14,7 @@ pyarrow
 streamlit>=1.40
 folium
 streamlit-folium
+joblib
+shap
+
+xgboost>=2.0
