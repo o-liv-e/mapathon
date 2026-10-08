@@ -252,7 +252,8 @@ def predict_grid(gdf, model, feature_cols, label_encoder):
 
 def explain_cell_prediction(model, cell_features, feature_cols):
     """
-    Computes SHAP values or tree feature contributions for a single grid cell.
+    Computes SHAP values or feature contributions for a single grid cell,
+    ensuring all output arrays are flattened to 1D to prevent DataFrame errors.
     """
     X_single = cell_features[feature_cols].values.reshape(1, -1)
     
@@ -261,23 +262,30 @@ def explain_cell_prediction(model, cell_features, feature_cols):
         explainer = shap.TreeExplainer(model)
         shap_values = explainer.shap_values(X_single)
         
+        # Handle multi-class SHAP output lists or multi-dimensional arrays
         if isinstance(shap_values, list):
-            vals = shap_values[0][0]
+            vals = np.array(shap_values[0]).flatten()
+        elif isinstance(shap_values, np.ndarray):
+            vals = shap_values.flatten()
         else:
-            vals = shap_values[0]
+            vals = np.array(shap_values).flatten()
+            
     except Exception:
-        # Fallback feature contribution estimation if SHAP library isn't present
+        # Fallback feature contribution estimation
         importances = getattr(model, 'feature_importances_', np.ones(len(feature_cols)) / len(feature_cols))
-        vals = importances * X_single[0]
+        vals = (importances * X_single[0]).flatten()
+
+    # Ensure all inputs to pd.DataFrame are flattened 1D arrays
+    feature_vals = X_single.flatten()
+    vals = vals[:len(feature_cols)]  # Slice to match feature_cols length
 
     importance_df = pd.DataFrame({
-        'feature': feature_cols,
-        'shap_value': vals,
-        'feature_value': X_single[0]
+        'feature': list(feature_cols),
+        'shap_value': vals.tolist(),
+        'feature_value': feature_vals.tolist()
     }).sort_values(by='shap_value', key=abs, ascending=False)
 
     return importance_df
-
 
 def save_bundle(output_path, models, feature_cols, metadata):
     """
