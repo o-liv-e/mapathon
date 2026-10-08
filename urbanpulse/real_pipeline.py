@@ -4,7 +4,7 @@ This module deliberately keeps processing tile-based: Sentinel-2 data are fetche
 processing tile at a time and aggregated to the UrbanPulse 100 m analysis grid.
 """
 from __future__ import annotations
-import io, json, os, tempfile
+import io, json, os, tempfile, time
 from pathlib import Path
 import numpy as np
 import pandas as pd
@@ -77,18 +77,44 @@ def download_tile(image, geometry, crs):
 
     target_crs = crs.to_string() if hasattr(crs, "to_string") else str(crs)
 
-    url = bounded.getDownloadURL({
+    params = {
         "name": "urbanpulse_s2",
         "region": region,
         "scale": 10,
         "crs": target_crs,
         "filePerBand": False,
         "format": "GEO_TIFF",
-    })
+    }
 
-    response = requests.get(url, timeout=180)
-    response.raise_for_status()
-    return response.content
+    # Earth Engine's download/thumbnail service can transiently return 502/503/504
+    # during bursts of tile requests. Generate a fresh signed URL for every retry
+    # rather than retrying a potentially expired URL.
+    last_error = None
+    for attempt in range(5):
+        try:
+            url = bounded.getDownloadURL(params)
+            response = requests.get(url, timeout=240)
+            if response.status_code in (429, 500, 502, 503, 504):
+                last_error = RuntimeError(
+                    f"Earth Engine tile download returned HTTP {response.status_code}"
+                )
+                if attempt < 4:
+                    time.sleep(2 ** attempt)
+                    continue
+            response.raise_for_status()
+            return response.content
+        except (requests.RequestException, RuntimeError) as exc:
+            last_error = exc
+            if attempt < 4:
+                time.sleep(2 ** attempt)
+                continue
+            raise RuntimeError(
+                "Earth Engine temporarily failed while downloading a Sentinel-2 tile "
+                f"after 5 attempts. Last error: {exc}. Try running the AOI again; "
+                "if it persists, reduce the AOI/tile load or retry later."
+            ) from exc
+
+    raise RuntimeError(f"Earth Engine tile download failed: {last_error}")
 
 def fetch_osm(aoi_ll, crs, include_buildings=True, include_roads=True):
     """Optional OSM structural context. Returns building/road GeoDataFrames."""
