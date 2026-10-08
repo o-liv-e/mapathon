@@ -44,7 +44,7 @@ class NumericFeatureColumns(list):
         return list(self)
 
 
-# Exported object expected by app.py imports
+# Exported hybrid object expected by app.py imports
 numeric_feature_columns = NumericFeatureColumns()
 
 
@@ -116,8 +116,8 @@ def _spatial_eval(model, X, y, groups):
 
 def train_models(gdf, labels):
     """
-    Trains Random Forest and XGBoost models on morphology features, returning 
-    evaluations structured with explicit 'cv_report' keys to satisfy app.py formatting.
+    Trains Random Forest and XGBoost models on morphology features, encoding
+    discontinuous target indices and populating all required UI metadata.
     """
     feature_cols = numeric_feature_columns(gdf)
     X = gdf[feature_cols].values
@@ -140,6 +140,10 @@ def train_models(gdf, labels):
 
     groups = gdf['group_id'].values if 'group_id' in gdf.columns else np.arange(len(gdf))
 
+    # Calculate raw class counts for Streamlit rendering
+    unique_labels, counts = np.unique(y_raw, return_counts=True)
+    label_counts_dict = dict(zip(map(str, unique_labels), map(int, counts)))
+
     # Encode target labels into contiguous zero-indexed integers [0, 1, 2, ...]
     le = LabelEncoder()
     y = le.fit_transform(y_raw)
@@ -156,7 +160,7 @@ def train_models(gdf, labels):
         random_state=42
     )
 
-    # Run spatial evaluation using XGBoost and Random Forest
+    # Run spatial evaluation
     (xgb_report, xgb_cm), cv_name = _spatial_eval(xgb_model, X, y, groups)
     (rf_report, rf_cm), _ = _spatial_eval(rf_model, X, y, groups)
 
@@ -169,6 +173,7 @@ def train_models(gdf, labels):
         'selected_model': 'xgboost',
         'n_rows': n_rows,
         'n_samples': n_rows,
+        'label_counts': label_counts_dict,
         'label_encoder': le,
         'classes': le.classes_.tolist()
     }
@@ -179,7 +184,7 @@ def train_models(gdf, labels):
         'classes_mapped': dict(zip(map(int, le.transform(le.classes_)), le.classes_))
     }
 
-    # Structure keys explicitly matching app.py line 190 (cv_report, cv_cm, holdout)
+    # Format evaluations to satisfy app.py rendering
     eval_dict_xgb = {
         'model_name': 'xgboost',
         'spatial_cv_name': cv_name,

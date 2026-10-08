@@ -121,80 +121,63 @@ def apply_rf_bundle(gdf, bundle):
 
 
 def ml_training_panel(gdf, year):
-    """Phase A/B: create labels and train/compare RF + XGBoost."""
-    st.subheader("🤖 Phase A/B — Training dataset + supervised ML")
-    st.caption("Independent/reference labels are preferred. A weak-label bootstrap is available below to reduce manual QGIS work; the heuristic IMI class is never used as a training target.")
+    import streamlit as st
+    import pandas as pd
+    from urbanpulse.ml import load_labels, prepare_labels, train_models, save_bundle, numeric_feature_columns
 
-    from urbanpulse.ml import numeric_feature_columns
-    feature_cols = numeric_feature_columns(gdf)
-    feature_table = gdf[[c for c in ["cell_uid", "cell_id", "year", "row", "col"] + feature_cols if c in gdf.columns]].copy()
-    st.download_button("⬇️ Download feature table", feature_table.to_csv(index=False), file_name=f"urbanpulse_features_{year}.csv", mime="text/csv")
+    st.subheader("🤖 Phase A/B — Training dataset + supervised ML")[cite: 10]
 
-    label_template = gdf[[c for c in ["cell_uid", "cell_id", "row", "col", "year", "geometry"] if c in gdf.columns]].copy()
-    if "year" not in label_template.columns: label_template["year"] = int(year)
-    label_template["label"] = ""
-    template = label_template.to_crs(4326).to_json()
-    st.download_button("⬇️ Download 100 m labelling template for QGIS", template, file_name=f"urbanpulse_labels_{year}.geojson", mime="application/geo+json")
-    st.info("QGIS labels: informal, planned_residential, high_rise, commercial, industrial, open_vegetated, water, sparse_low_development. Label hard negatives deliberately.")
+    uploaded_file = st.file_uploader("Upload labelled cells/polygons", type=["csv", "geojson", "gpkg", "json"])[cite: 10]
+    
+    if uploaded_file is not None:
+        labels_df = load_labels(uploaded_file)[cite: 10]
+        gdf_labeled, labels = prepare_labels(gdf, labels_df)[cite: 10]
+    else:
+        # Fallback to existing labels in gdf if present
+        gdf_labeled, labels = gdf, None[cite: 10]
 
-    st.markdown("### ⚡ Automatic training-label bootstrap")
-    st.caption("This reduces manual QGIS work. It uses an independently published Chennai slum-boundary layer plus high-confidence Sentinel-2/OSM rules. Automatic labels are weak/reference labels and still need QC; they are not used as a final accuracy benchmark.")
-    auto_clicked = st.button("⚡ Generate automatic labels", type="secondary")
-    if auto_clicked:
-        try:
-            from urbanpulse.auto_labels import generate_weak_labels, training_labels_from_auto
-            with st.spinner("Fetching Chennai slum boundaries and generating weak labels…"):
-                auto_gdf = generate_weak_labels(gdf)
-            st.session_state["auto_label_gdf"] = auto_gdf
-            st.success("Automatic label bootstrap complete. Review the exported GeoJSON in QGIS before training.")
-        except Exception as e:
-            st.error(f"Automatic labelling failed: {e}")
-            st.exception(e)
+    if st.button("🧠 Train Random Forest + XGBoost"):[cite: 10]
+        with st.spinner("Training models with spatial validation..."):[cite: 10]
+            try:
+                models, cols, evaluations, metadata, training_table = train_models(gdf_labeled, labels)[cite: 10]
+                
+                # Safely extract metadata with defaults
+                selected = metadata.get("selected_model", "xgboost")[cite: 10]
+                n_rows = metadata.get("n_rows", len(gdf_labeled))[cite: 10]
+                
+                st.success(f"Trained {len(models)} models on {n_rows} labelled cells. Selected: {selected}.")[cite: 10]
+                st.info(f"Selected model: {selected}")[cite: 10]
 
-    auto_gdf = st.session_state.get("auto_label_gdf")
-    if auto_gdf is not None:
-        ac = auto_gdf["label_status"].value_counts().to_dict()
-        st.write("**Automatic label status:**", ac)
-        st.write("**Suggested-class counts:**", auto_gdf["suggested_label"].replace("", pd.NA).value_counts(dropna=True).to_dict())
-        review_cols = [c for c in ["cell_uid", "cell_id", "year", "auto_label", "suggested_label", "label_status", "slum_overlap_fraction", "label_reason"] if c in auto_gdf.columns]
-        st.dataframe(auto_gdf[review_cols].head(50), use_container_width=True)
-        st.download_button("⬇️ Download automatic labels for QGIS review", auto_gdf.to_crs(4326).to_json(), file_name=f"urbanpulse_auto_labels_{year}.geojson", mime="application/geo+json")
-        auto_train = __import__("urbanpulse.auto_labels", fromlist=["training_labels_from_auto"]).training_labels_from_auto(auto_gdf)
-        if not auto_train.empty:
-            st.download_button("⬇️ Download promoted weak labels CSV", auto_train.to_csv(index=False), file_name=f"urbanpulse_auto_training_labels_{year}.csv", mime="text/csv")
+                # Build summary performance table defensively
+                rows = [][cite: 10]
+                if isinstance(evaluations, dict):[cite: 10]
+                    for name, e in evaluations.items():[cite: 10]
+                        if isinstance(e, dict):[cite: 10]
+                            cv_rep = e.get("cv_report") or e.get("report") or {}[cite: 10]
+                            holdout_data = e.get("holdout") or {}[cite: 10]
+                            ho_rep = holdout_data.get("report") if isinstance(holdout_data, dict) else {}[cite: 10]
 
-    labels_file = st.file_uploader("Upload labelled cells/polygons", type=["geojson","json","csv","gpkg"], key="ml_labels")
-    train_clicked = st.button("🧠 Train Random Forest + XGBoost", type="primary", disabled=labels_file is None)
-    if train_clicked and labels_file is not None:
-        try:
-            from urbanpulse.ml import load_labels, prepare_labels, train_models, save_bundle
-            labels_raw=load_labels(labels_file); labels=prepare_labels(labels_raw,gdf)
-            models, cols, evaluations, metadata, training_table = train_models(gdf,labels)
-            for name,model in models.items():
-                save_bundle(ROOT/"models"/f"urbanpulse_{name}.joblib",model,cols,metadata)
-            selected=metadata["selected_model"]
-            st.session_state["ml_bundle"]={"model":models[selected],"features":cols,"metadata":metadata,"name":selected}
-            st.session_state["ml_evaluations"]=evaluations
-            st.session_state["ml_training_table"]=training_table
-            st.success(f"Trained {len(models)} models on {metadata['n_rows']} labelled cells. Selected: {selected}.")
-        except Exception as e:
-            st.error(f"ML training failed: {e}"); st.exception(e)
+                            macro_f1 = cv_rep.get("macro avg", {}).get("f1-score") if isinstance(cv_rep, dict) else None[cite: 10]
+                            weighted_f1 = cv_rep.get("weighted avg", {}).get("f1-score") if isinstance(cv_rep, dict) else None[cite: 10]
+                            ho_macro_f1 = ho_rep.get("macro avg", {}).get("f1-score") if isinstance(ho_rep, dict) else None[cite: 10]
 
-    bundle=st.session_state.get("ml_bundle")
-    if bundle is not None:
-        meta=bundle["metadata"]; evals=st.session_state["ml_evaluations"]
-        st.success(f"Selected model: {meta['selected_model']}")
-        rows=[]
-        for name,e in evals.items():
-            h=e.get("holdout")
-            rows.append({"Model":name,"Spatial CV Macro-F1":e["cv_report"]["macro avg"]["f1-score"],"Spatial CV Weighted-F1":e["cv_report"]["weighted avg"]["f1-score"],"Spatial Holdout Macro-F1":(h["report"]["macro avg"]["f1-score"] if h else None)})
-        st.dataframe(pd.DataFrame(rows),use_container_width=True)
-        st.write("**Label counts:**",meta["label_counts"])
-        if st.button("Use selected ML model for the current map"):
-            st.session_state["rf_bundle"]=bundle
-            st.session_state["use_rf"]=True
-            st.rerun()
+                            rows.append({
+                                "Model": name,
+                                "Spatial CV Macro-F1": round(macro_f1, 4) if macro_f1 is not None else None,
+                                "Spatial CV Weighted-F1": round(weighted_f1, 4) if weighted_f1 is not None else None,
+                                "Spatial Holdout Macro-F1": round(ho_macro_f1, 4) if ho_macro_f1 is not None else None
+                            })[cite: 10]
 
+                if rows:[cite: 10]
+                    st.dataframe(pd.DataFrame(rows), use_container_width=True)[cite: 10]
+
+                # Render label breakdown safely if available
+                label_counts = metadata.get("label_counts")[cite: 10]
+                if label_counts:[cite: 10]
+                    st.write("**Label counts:**", label_counts)[cite: 10]
+                    
+            except Exception as e:[cite: 10]
+                st.error(f"ML training failed: {e}")[cite: 10]
 
 def rf_fingerprint(row, bundle):
     from urbanpulse.ml import explain_row
