@@ -235,3 +235,29 @@ def save_bundle(output_path, models, feature_cols, metadata):
     with open(output_path, 'wb') as f:
         pickle.dump(bundle, f)
     return output_path
+def predict_grid(gdf, model, feature_cols, label_encoder):
+    """
+    Runs spatial inference over all grid cells, returning predicted classes, 
+    class probabilities, and an Informal Morphology Index (IMI) score.
+    """
+    df = gdf.copy()
+    X = df[feature_cols].values
+
+    # Predict discrete class indices and probabilities
+    preds = model.predict(X)
+    probs = model.predict_proba(X)
+
+    # Decode class indices back to original string labels
+    df['predicted_class'] = label_encoder.inverse_transform(preds)
+    
+    # Extract probability for the 'informal' class to use as the IMI score
+    classes = list(label_encoder.classes_)
+    if 'informal' in classes:
+        informal_idx = classes.index('informal')
+        df['imi'] = probs[:, informal_idx]
+    else:
+        # Fallback to max probability if 'informal' isn't explicitly named
+        df['imi'] = probs.max(axis=1)
+
+    df['confidence'] = probs.max(axis=1)
+    return df

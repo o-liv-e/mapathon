@@ -122,7 +122,7 @@ def apply_rf_bundle(gdf, bundle):
 def ml_training_panel(gdf, year):
     import streamlit as st
     import pandas as pd
-    from urbanpulse.ml import load_labels, prepare_labels, train_models, save_bundle, numeric_feature_columns
+    from urbanpulse.ml import load_labels, prepare_labels, train_models, save_bundle, numeric_feature_columns, predict_grid, explain_cell_prediction
 
     st.subheader("🤖 Phase A/B — Training dataset + supervised ML")
 
@@ -174,10 +174,45 @@ def ml_training_panel(gdf, year):
                 label_counts = metadata.get("label_counts")
                 if label_counts:
                     st.write("**Label counts:**", label_counts)
+
+                # --- Inference & SHAP XAI Engine ---
+                selected_model_obj = models[selected]
+                gdf_predicted = predict_grid(gdf_labeled, selected_model_obj, cols, metadata['label_encoder'])
+
+                st.subheader("🗺️ Inference & Informal Morphology Index (IMI)")
+
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.metric("Avg Informal Morphology Index", f"{gdf_predicted['imi'].mean():.2f}")
+                with col2:
+                    high_imi_count = (gdf_predicted['imi'] > 0.5).sum()
+                    st.metric("High-IMI Priority Cells (>0.5)", int(high_imi_count))
+
+                # Interactive Local Feature Explanation (SHAP)
+                st.subheader("💡 Explainable AI (XAI) Cell Inspector")
+                cell_ids = gdf_predicted['cell_id'].tolist() if 'cell_id' in gdf_predicted.columns else gdf_predicted.index.tolist()
+                selected_cell = st.selectbox("Select Cell ID to inspect feature contributions:", cell_ids)
+
+                if selected_cell:
+                    cell_data = gdf_predicted[gdf_predicted['cell_id'] == selected_cell] if 'cell_id' in gdf_predicted.columns else gdf_predicted.loc[[selected_cell]]
+                    explanation_df = explain_cell_prediction(selected_model_obj, cell_data, cols)
                     
+                    st.write(f"**Predicted Class:** `{cell_data['predicted_class'].values[0]}` | **IMI Score:** `{cell_data['imi'].values[0]:.3f}`")
+                    st.bar_chart(explanation_df.set_index('feature')['shap_value'])
+
+                # GeoJSON Export
+                st.subheader("📥 Export Results")
+                geojson_data = gdf_predicted.to_json()
+                st.download_button(
+                    label="Download Predictions as GeoJSON",
+                    data=geojson_data,
+                    file_name=f"urbanpulse_predictions_{year}.geojson",
+                    mime="application/geo+json"
+                )
+
             except Exception as e:
                 st.error(f"ML training failed: {e}")
-
+                
 def display_results(gdf, area_km2, n_tiles, year):
     if st.session_state.get("use_rf") and st.session_state.get("rf_bundle") is not None:
         gdf = apply_rf_bundle(gdf, st.session_state["rf_bundle"])
