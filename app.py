@@ -123,7 +123,7 @@ def apply_rf_bundle(gdf, bundle):
 def ml_training_panel(gdf, year):
     """Phase A/B: create labels and train/compare RF + XGBoost."""
     st.subheader("🤖 Phase A/B — Training dataset + supervised ML")
-    st.caption("Independent human/reference labels are required. The heuristic IMI class is never used as a training target.")
+    st.caption("Independent/reference labels are preferred. A weak-label bootstrap is available below to reduce manual QGIS work; the heuristic IMI class is never used as a training target.")
 
     from urbanpulse.ml import numeric_feature_columns
     feature_cols = numeric_feature_columns(gdf)
@@ -136,6 +136,32 @@ def ml_training_panel(gdf, year):
     template = label_template.to_crs(4326).to_json()
     st.download_button("⬇️ Download 100 m labelling template for QGIS", template, file_name=f"urbanpulse_labels_{year}.geojson", mime="application/geo+json")
     st.info("QGIS labels: informal, planned_residential, high_rise, commercial, industrial, open_vegetated, water, sparse_low_development. Label hard negatives deliberately.")
+
+    st.markdown("### ⚡ Automatic training-label bootstrap")
+    st.caption("This reduces manual QGIS work. It uses an independently published Chennai slum-boundary layer plus high-confidence Sentinel-2/OSM rules. Automatic labels are weak/reference labels and still need QC; they are not used as a final accuracy benchmark.")
+    auto_clicked = st.button("⚡ Generate automatic labels", type="secondary")
+    if auto_clicked:
+        try:
+            from urbanpulse.auto_labels import generate_weak_labels, training_labels_from_auto
+            with st.spinner("Fetching Chennai slum boundaries and generating weak labels…"):
+                auto_gdf = generate_weak_labels(gdf)
+            st.session_state["auto_label_gdf"] = auto_gdf
+            st.success("Automatic label bootstrap complete. Review the exported GeoJSON in QGIS before training.")
+        except Exception as e:
+            st.error(f"Automatic labelling failed: {e}")
+            st.exception(e)
+
+    auto_gdf = st.session_state.get("auto_label_gdf")
+    if auto_gdf is not None:
+        ac = auto_gdf["label_status"].value_counts().to_dict()
+        st.write("**Automatic label status:**", ac)
+        st.write("**Suggested-class counts:**", auto_gdf["suggested_label"].replace("", pd.NA).value_counts(dropna=True).to_dict())
+        review_cols = [c for c in ["cell_uid", "cell_id", "year", "auto_label", "suggested_label", "label_status", "slum_overlap_fraction", "label_reason"] if c in auto_gdf.columns]
+        st.dataframe(auto_gdf[review_cols].head(50), use_container_width=True)
+        st.download_button("⬇️ Download automatic labels for QGIS review", auto_gdf.to_crs(4326).to_json(), file_name=f"urbanpulse_auto_labels_{year}.geojson", mime="application/geo+json")
+        auto_train = __import__("urbanpulse.auto_labels", fromlist=["training_labels_from_auto"]).training_labels_from_auto(auto_gdf)
+        if not auto_train.empty:
+            st.download_button("⬇️ Download promoted weak labels CSV", auto_train.to_csv(index=False), file_name=f"urbanpulse_auto_training_labels_{year}.csv", mime="text/csv")
 
     labels_file = st.file_uploader("Upload labelled cells/polygons", type=["geojson","json","csv","gpkg"], key="ml_labels")
     train_clicked = st.button("🧠 Train Random Forest + XGBoost", type="primary", disabled=labels_file is None)
