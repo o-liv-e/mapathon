@@ -81,8 +81,18 @@ def prepare_labels(gdf, labels_df):
             df['label'] = labels_df['label'].values
             
     # Clean and filter out rows missing labels
-    labeled_gdf = df.dropna(subset=['label']).copy()
-    return labeled_gdf, labeled_gdf['label'].values
+    target_col = 'label' if 'label' in df.columns else None
+    if not target_col:
+        for candidate in ['predicted_class', 'class', 'auto_label']:
+            if candidate in df.columns:
+                target_col = candidate
+                break
+
+    if target_col:
+        labeled_gdf = df.dropna(subset=[target_col]).copy()
+        return labeled_gdf, labeled_gdf[target_col].values
+    
+    return df, None
 
 
 def _spatial_eval(model, X, y, groups):
@@ -106,13 +116,28 @@ def _spatial_eval(model, X, y, groups):
 
 def train_models(gdf, labels):
     """
-    Trains Random Forest and XGBoost models on morphology features, encoding 
-    discontinuous class target integers into continuous [0, 1, 2, ...] ranges.
+    Trains Random Forest and XGBoost models on morphology features, safely extracting
+    target array y regardless of label input format.
     """
     feature_cols = numeric_feature_columns(gdf)
-    
     X = gdf[feature_cols].values
-    y_raw = labels if isinstance(labels, np.ndarray) else gdf['label'].values
+
+    # Robust target label extraction
+    if isinstance(labels, np.ndarray):
+        y_raw = labels
+    elif isinstance(labels, (pd.Series, pd.DataFrame)):
+        y_raw = labels.values.ravel()
+    elif 'label' in gdf.columns:
+        y_raw = gdf['label'].values
+    else:
+        # Fallback to candidate label column names
+        for col in ['predicted_class', 'class', 'auto_label']:
+            if col in gdf.columns:
+                y_raw = gdf[col].values
+                break
+        else:
+            raise KeyError("Could not locate a target label column in 'gdf' or 'labels'. Expected 'label' column.")
+
     groups = gdf['group_id'].values if 'group_id' in gdf.columns else np.arange(len(gdf))
 
     # Encode target labels into contiguous zero-indexed integers [0, 1, 2, ...]
