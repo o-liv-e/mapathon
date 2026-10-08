@@ -154,42 +154,22 @@ def run_real_inference(aoi_ll, year=2025, include_osm=True, progress=None):
     feats = add_spatial_context(feats, radius_cells=1)
     feats = compute_imi(feats)
 
-    # Review-stage built-form gate. The previous gate was too strict for 100 m
-    # cells in dense Chennai, which caused genuinely urban cells to be labelled
-    # sparse_low_development. This gate is intentionally a morphology gate, not
-    # a claim about legal/informal housing status.
-    local_density = feats.get("local_building_density", feats["building_density"])
+    # Critical false-positive guard: informal morphology only makes sense where there is enough built form.
     feats["built_gate"] = (
-        (
-            (feats["building_count"] >= 3)
-            & (feats["building_density"] >= 0.02)
-        )
-        | (
-            (feats["building_count"] >= 1)
-            & (feats["building_density"] >= 0.01)
-            & (feats["impervious_fraction"] >= 0.20)
-        )
-    ) & (local_density >= 0.02)
-
-    # Water/vegetation are checked before built-form classes.
-    water = feats["water_fraction"] > 0.35
-    vegetation = feats["vegetation_fraction"] > 0.55
+        (feats["building_count"] >= 8) &
+        (feats["building_density"] >= 0.15) &
+        (feats["impervious_fraction"] >= 0.25) &
+        (feats.get("local_building_density", feats["building_density"]) >= 0.10)
+    )
     feats["imi"] = feats["imi"].where(feats["built_gate"], 0.0)
-
-    # This is a transparent morphology baseline, not a trained probability of
-    # informal housing. The thresholds are review-stage starting points.
     feats["predicted_class"] = np.select(
-        [water, vegetation, ~feats["built_gate"], feats["imi"] >= 0.58, feats["imi"] >= 0.40],
-        ["water", "open_vegetated", "sparse_low_development", "informal_morphology_candidate", "built_mixed"],
+        [~feats["built_gate"], feats["water_fraction"] > 0.35, feats["vegetation_fraction"] > 0.55,
+         feats["imi"] >= 0.62, feats["imi"] >= 0.45],
+        ["sparse_low_development", "water", "open_vegetated", "informal", "built_mixed"],
         default="built_planned_like",
     )
     feats["informal_probability"] = np.where(feats["built_gate"], feats["imi"], 0.0)
-    # Heuristic confidence: explicitly avoid presenting this as validated ML probability.
-    feats["confidence"] = np.where(
-        feats["built_gate"],
-        np.clip(0.50 + 0.50 * np.abs(feats["imi"] - 0.50) * 2.0, 0.50, 1.0),
-        0.50,
-    )
+    feats["confidence"] = np.clip(np.where(feats["built_gate"], 0.55 + 0.45 * np.abs(feats["imi"] - 0.5) * 2, 0.85), 0, 1)
     feats = add_cell_explanations(feats)
     out = cells.merge(feats, on="cell_id", how="left")
     out = gpd.GeoDataFrame(out, geometry="geometry", crs=aoi_p.crs)
