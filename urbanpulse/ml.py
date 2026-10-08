@@ -117,7 +117,7 @@ def _spatial_eval(model, X, y, groups):
 def train_models(gdf, labels):
     """
     Trains Random Forest and XGBoost models on morphology features, returning 
-    evaluations structured as dictionaries per model to satisfy app.py lookups.
+    evaluations structured with explicit 'cv_report' keys to satisfy app.py formatting.
     """
     feature_cols = numeric_feature_columns(gdf)
     X = gdf[feature_cols].values
@@ -179,12 +179,12 @@ def train_models(gdf, labels):
         'classes_mapped': dict(zip(map(int, le.transform(le.classes_)), le.classes_))
     }
 
-    # Format evaluations as a list of dicts or dict of dicts so e.get("holdout") works when app.py iterates through evaluations
+    # Structure keys explicitly matching app.py line 190 (cv_report, cv_cm, holdout)
     eval_dict_xgb = {
         'model_name': 'xgboost',
         'spatial_cv_name': cv_name,
-        'report': xgb_report,
-        'confusion_matrix': xgb_cm,
+        'cv_report': xgb_report,
+        'cv_cm': xgb_cm,
         'holdout': {
             'report': xgb_report,
             'confusion_matrix': xgb_cm,
@@ -195,8 +195,8 @@ def train_models(gdf, labels):
     eval_dict_rf = {
         'model_name': 'random_forest',
         'spatial_cv_name': cv_name,
-        'report': rf_report,
-        'confusion_matrix': rf_cm,
+        'cv_report': rf_report,
+        'cv_cm': rf_cm,
         'holdout': {
             'report': rf_report,
             'confusion_matrix': rf_cm,
@@ -204,7 +204,6 @@ def train_models(gdf, labels):
         }
     }
 
-    # Structured to work whether app.py does `for name, e in evaluations.items():` or `for e in evaluations:`
     evaluations = {
         'xgboost': eval_dict_xgb,
         'random_forest': eval_dict_rf
