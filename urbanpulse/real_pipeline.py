@@ -50,63 +50,43 @@ def sentinel_composite(region, year):
            .map(_mask_s2))
     if col.size().getInfo() == 0:
         raise RuntimeError(f"No usable Sentinel-2 scenes found for {year} in the selected AOI.")
-    return col.select(BANDS_IN, BANDS_OUT).median().divide(10000)
+    # Keep the original Sentinel-2 band names because download_tile requests B2...B12.
+    return col.select(BANDS_IN).median().divide(10000)
 
 
 def download_tile(image, geometry, crs):
-    """Download one bounded Sentinel-2 tile at 10 m resolution.
+    """Download one bounded Sentinel-2 tile in the processing CRS.
 
-    The processing tiles are stored in the local projected CRS, while Earth
-    Engine regions are supplied as WGS84 GeoJSON.  The download itself uses
-    the projected CRS so that ``scale=10`` means 10 metres, not 10 degrees.
+    Earth Engine expects the download region in WGS84, while Rasterio and the
+    feature engine operate in the projected AOI CRS. Keeping the output raster
+    in the processing CRS prevents enormous, invalid Rasterio windows.
     """
-    from pyproj import Transformer
-    from shapely.geometry import mapping
-
-    # ``geometry`` is a Shapely geometry from make_tiles(), so it does not
-    # have a GeoPandas ``to_crs`` method. Transform its coordinates explicitly.
-    source_crs = crs
-    transformer = Transformer.from_crs(
-        source_crs,
-        "EPSG:4326",
-        always_xy=True,
+    # row.geometry is a Shapely geometry in the projected AOI CRS.
+    # Convert it to WGS84 only for Earth Engine's region parameter.
+    geom_wgs84 = (
+        gpd.GeoSeries([geometry], crs=crs)
+        .to_crs("EPSG:4326")
+        .iloc[0]
     )
-
-    def transform_coords(coords):
-        return [transformer.transform(x, y) for x, y in coords]
-
-    geom_wgs84 = geometry
-    # Shapely's transform handles Polygon/MultiPolygon/other geometry types.
-    from shapely.ops import transform as shapely_transform
-    geom_wgs84 = shapely_transform(
-        transformer.transform,
-        geometry,
-    )
-
-    region = mapping(geom_wgs84)
+    region = geom_wgs84.__geo_interface__
     ee_region = ee.Geometry(region)
 
-    # Keep only the six Sentinel-2 bands used by the feature engine.
-    bounded = image.clip(ee_region).select(BANDS_IN)
+    # Clip the composite to this tile. The composite retains the original
+    # Sentinel-2 band names (B2, B3, B4, B8, B11, B12).
+    bounded = image.clip(ee_region)
 
-    # Use the local projected CRS for the pixel grid. This is critical: using
-    # EPSG:4326 together with scale=10 asks Earth Engine for 10-degree pixels,
-    # which can create an enormous raster and exhaust memory.
-    download_crs = crs.to_string() if hasattr(crs, "to_string") else str(crs)
+    target_crs = crs.to_string() if hasattr(crs, "to_string") else str(crs)
 
     url = bounded.getDownloadURL({
         "name": "urbanpulse_s2",
         "region": region,
         "scale": 10,
-        "crs": download_crs,
+        "crs": target_crs,
         "filePerBand": False,
         "format": "GEO_TIFF",
     })
 
-    response = requests.get(
-        url,
-        timeout=180,
-    )
+    response = requests.get(url, timeout=180)
     response.raise_for_status()
     return response.content
 
