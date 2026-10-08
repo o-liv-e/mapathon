@@ -44,7 +44,7 @@ class NumericFeatureColumns(list):
         return list(self)
 
 
-# Exported hybrid object expected by app.py imports
+# Exported object expected by app.py imports
 numeric_feature_columns = NumericFeatureColumns()
 
 
@@ -117,7 +117,7 @@ def _spatial_eval(model, X, y, groups):
 def train_models(gdf, labels):
     """
     Trains Random Forest and XGBoost models on morphology features, encoding
-    discontinuous target indices and populating all required UI metadata.
+    discontinuous target indices and populating required metadata.
     """
     feature_cols = numeric_feature_columns(gdf)
     X = gdf[feature_cols].values
@@ -222,19 +222,6 @@ def train_models(gdf, labels):
     return models, feature_cols, evaluations, metadata, training_table
 
 
-def save_bundle(output_path, models, feature_cols, metadata):
-    """
-    Serializes trained models, metadata, and feature lists to disk.
-    """
-    bundle = {
-        'models': models,
-        'feature_cols': feature_cols,
-        'metadata': metadata
-    }
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    with open(output_path, 'wb') as f:
-        pickle.dump(bundle, f)
-    return output_path
 def predict_grid(gdf, model, feature_cols, label_encoder):
     """
     Runs spatial inference over all grid cells, returning predicted classes, 
@@ -261,3 +248,47 @@ def predict_grid(gdf, model, feature_cols, label_encoder):
 
     df['confidence'] = probs.max(axis=1)
     return df
+
+
+def explain_cell_prediction(model, cell_features, feature_cols):
+    """
+    Computes SHAP values or tree feature contributions for a single grid cell.
+    """
+    X_single = cell_features[feature_cols].values.reshape(1, -1)
+    
+    try:
+        import shap
+        explainer = shap.TreeExplainer(model)
+        shap_values = explainer.shap_values(X_single)
+        
+        if isinstance(shap_values, list):
+            vals = shap_values[0][0]
+        else:
+            vals = shap_values[0]
+    except Exception:
+        # Fallback feature contribution estimation if SHAP library isn't present
+        importances = getattr(model, 'feature_importances_', np.ones(len(feature_cols)) / len(feature_cols))
+        vals = importances * X_single[0]
+
+    importance_df = pd.DataFrame({
+        'feature': feature_cols,
+        'shap_value': vals,
+        'feature_value': X_single[0]
+    }).sort_values(by='shap_value', key=abs, ascending=False)
+
+    return importance_df
+
+
+def save_bundle(output_path, models, feature_cols, metadata):
+    """
+    Serializes trained models, metadata, and feature lists to disk.
+    """
+    bundle = {
+        'models': models,
+        'feature_cols': feature_cols,
+        'metadata': metadata
+    }
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    with open(output_path, 'wb') as f:
+        pickle.dump(bundle, f)
+    return output_path
