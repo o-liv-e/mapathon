@@ -163,8 +163,9 @@ def train_models(gdf, labels):
     xgb_model.fit(X, y)
     rf_model.fit(X, y)
 
-    # Store mapping metadata for decoding predictions later
+    # Fix: Include 'selected_model' in metadata so app.py can display/log the active model
     metadata = {
+        'selected_model': 'xgboost',
         'label_encoder': le,
         'classes': le.classes_.tolist()
     }
