@@ -1,8 +1,48 @@
+import numpy as np
+import xgboost as xgb
 from sklearn.preprocessing import LabelEncoder
 from sklearn.model_selection import StratifiedGroupKFold, cross_val_predict
 from sklearn.metrics import classification_report, confusion_matrix
-import xgboost as xgb
-import numpy as np
+
+# Default morphology feature column list
+DEFAULT_NUMERIC_FEATURE_COLUMNS = [
+    'building_count',
+    'building_density',
+    'building_irregularity',
+    'impervious_fraction',
+    'ndvi',
+    'ndbi',
+    'built_up_intensity'
+]
+
+
+class NumericFeatureColumns(list):
+    """
+    Hybrid object that acts as a list of feature column names when iterated or indexed,
+    and as a function when called with a DataFrame: numeric_feature_columns(df).
+    """
+    def __init__(self, default_cols=None):
+        cols = default_cols or DEFAULT_NUMERIC_FEATURE_COLUMNS
+        super().__init__(cols)
+
+    def __call__(self, df=None):
+        if df is not None:
+            existing = [col for col in self if col in df.columns]
+            if existing:
+                return existing
+            
+            # Fallback: extract numeric features excluding metadata/target fields
+            exclude = {'cell_id', 'geometry', 'label', 'predicted_class', 'group_id', 'year', 'imi', 'confidence'}
+            return [
+                col for col in df.select_dtypes(include=[np.number]).columns 
+                if col not in exclude
+            ]
+        return list(self)
+
+
+# Exported object expected by app.py imports
+numeric_feature_columns = NumericFeatureColumns()
+
 
 def _spatial_eval(model, X, y, groups):
     """
@@ -25,14 +65,11 @@ def _spatial_eval(model, X, y, groups):
 
 def train_models(gdf, labels):
     """
-    Trains ML models (XGBoost / Random Forest) on morphology features, encoding 
+    Trains ML models (XGBoost) on morphology features, encoding 
     discontinuous class target integers into continuous [0, 1, 2, ...] ranges.
     """
-    # Extract feature columns and raw target labels
-    feature_cols = [
-        col for col in gdf.columns 
-        if col not in ['cell_id', 'geometry', 'label', 'predicted_class', 'group_id']
-    ]
+    # Extract feature columns using the hybrid resolver
+    feature_cols = numeric_feature_columns(gdf)
     
     X = gdf[feature_cols].values
     y_raw = labels if isinstance(labels, np.ndarray) else gdf['label'].values
@@ -49,7 +86,7 @@ def train_models(gdf, labels):
         eval_metric='mlogloss'
     )
 
-    # Run spatial evaluation with encoded y
+    # Run spatial evaluation with encoded continuous targets
     (cv_report, cv_cm), cv_name = _spatial_eval(model, X, y, groups)
 
     # Fit final model on complete dataset
@@ -61,7 +98,6 @@ def train_models(gdf, labels):
         'classes': le.classes_.tolist()
     }
 
-    # Format training summary table
     training_table = {
         'feature_count': X.shape[1],
         'sample_count': X.shape[0],
