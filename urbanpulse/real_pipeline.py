@@ -69,17 +69,30 @@ def sentinel_composite(region, year):
 
 
 def download_tile(image, geometry, crs):
-    """Download a bounded Sentinel-2 tile at 10 m resolution."""
+    """Download a bounded Sentinel-2 tile at 10 m resolution.
+
+    The processing tiles are stored in the AOI's projected CRS, while
+    Earth Engine download regions must be supplied as geographic
+    coordinates. Always reproject the tile explicitly to EPSG:4326.
+    """
+    # ``row.geometry`` is a Shapely geometry, so it does not have
+    # ``to_crs()``. Build a GeoSeries with the known source CRS and
+    # explicitly transform it to WGS84 before sending it to Earth Engine.
     if hasattr(geometry, "to_crs"):
-        geometry = geometry.to_crs("EPSG:4326")
+        geom_wgs84 = geometry.to_crs("EPSG:4326")
+        geom_wgs84 = geom_wgs84.geometry.iloc[0]
+    else:
+        geom_wgs84 = gpd.GeoSeries(
+            [geometry],
+            crs=crs,
+        ).to_crs("EPSG:4326").iloc[0]
 
-    region = geometry.__geo_interface__
-    ee_region = ee.Geometry(region)
+    # Use the Earth Engine geometry itself as the download region.
+    # getInfo() converts it to a plain GeoJSON geometry with geographic
+    # coordinates, avoiding the unbounded-image error from getDownloadURL.
+    ee_region = ee.Geometry(geom_wgs84.__geo_interface__)
+    region = ee_region.getInfo()
 
-    # Select the native Sentinel-2 bands on the image itself. Do not pass a
-    # second ``bands`` selection to getDownloadURL(); the previous version
-    # could cause Earth Engine to resolve B2 against an image whose bands had
-    # already been renamed.
     bounded = image.clip(ee_region).select(BANDS_IN)
 
     available = bounded.bandNames().getInfo()
